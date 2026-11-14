@@ -19,7 +19,16 @@
 package org.apache.skywalking.oap.server.core.storage;
 
 import org.apache.skywalking.oap.server.core.storage.cache.INetworkAddressAliasDAO;
+import org.apache.skywalking.oap.server.core.storage.management.RuntimeRuleManagementDAO;
 import org.apache.skywalking.oap.server.core.storage.management.UITemplateManagementDAO;
+import org.apache.skywalking.oap.server.core.storage.model.ModelInstaller;
+import org.apache.skywalking.oap.server.core.storage.profiling.asyncprofiler.IAsyncProfilerTaskLogQueryDAO;
+import org.apache.skywalking.oap.server.core.storage.profiling.asyncprofiler.IAsyncProfilerTaskQueryDAO;
+import org.apache.skywalking.oap.server.core.storage.profiling.asyncprofiler.IJFRDataQueryDAO;
+import org.apache.skywalking.oap.server.core.storage.profiling.pprof.IPprofTaskLogQueryDAO;
+import org.apache.skywalking.oap.server.core.storage.profiling.pprof.IPprofTaskQueryDAO;
+import org.apache.skywalking.oap.server.core.storage.profiling.pprof.IPprofDataQueryDAO;
+import org.apache.skywalking.oap.server.core.storage.profiling.continuous.IContinuousProfilingPolicyDAO;
 import org.apache.skywalking.oap.server.core.storage.profiling.ebpf.IServiceLabelDAO;
 import org.apache.skywalking.oap.server.core.storage.profiling.trace.IProfileTaskLogQueryDAO;
 import org.apache.skywalking.oap.server.core.storage.profiling.trace.IProfileTaskQueryDAO;
@@ -31,14 +40,20 @@ import org.apache.skywalking.oap.server.core.storage.profiling.ebpf.IEBPFProfili
 import org.apache.skywalking.oap.server.core.storage.profiling.ebpf.IEBPFProfilingScheduleDAO;
 import org.apache.skywalking.oap.server.core.storage.profiling.ebpf.IEBPFProfilingTaskDAO;
 import org.apache.skywalking.oap.server.core.storage.query.IEventQueryDAO;
+import org.apache.skywalking.oap.server.core.storage.query.IAIAgentConversationQueryDAO;
+import org.apache.skywalking.oap.server.core.storage.query.IGenAIEvaluationRecordQueryDAO;
+import org.apache.skywalking.oap.server.core.storage.query.IHierarchyQueryDAO;
 import org.apache.skywalking.oap.server.core.storage.query.ILogQueryDAO;
 import org.apache.skywalking.oap.server.core.storage.query.IMetadataQueryDAO;
 import org.apache.skywalking.oap.server.core.storage.query.IMetricsQueryDAO;
+import org.apache.skywalking.oap.server.core.storage.query.ISpanAttachedEventQueryDAO;
 import org.apache.skywalking.oap.server.core.storage.query.ITagAutoCompleteQueryDAO;
-import org.apache.skywalking.oap.server.core.storage.query.ITopNRecordsQueryDAO;
+import org.apache.skywalking.oap.server.core.storage.query.IRecordsQueryDAO;
 import org.apache.skywalking.oap.server.core.storage.query.ITopologyQueryDAO;
 import org.apache.skywalking.oap.server.core.storage.query.ITraceQueryDAO;
+import org.apache.skywalking.oap.server.core.storage.query.IOTLPTraceQueryDAO;
 import org.apache.skywalking.oap.server.core.storage.query.IZipkinQueryDAO;
+import org.apache.skywalking.oap.server.core.storage.ttl.StorageTTLStatusQuery;
 import org.apache.skywalking.oap.server.library.module.ModuleDefine;
 
 /**
@@ -67,8 +82,10 @@ public class StorageModule extends ModuleDefine {
             IMetadataQueryDAO.class,
             IAggregationQueryDAO.class,
             IAlarmQueryDAO.class,
-            ITopNRecordsQueryDAO.class,
+            IRecordsQueryDAO.class,
             ILogQueryDAO.class,
+            IGenAIEvaluationRecordQueryDAO.class,
+            IAIAgentConversationQueryDAO.class,
             IProfileTaskQueryDAO.class,
             IProfileTaskLogQueryDAO.class,
             IProfileThreadSnapshotQueryDAO.class,
@@ -78,9 +95,28 @@ public class StorageModule extends ModuleDefine {
             IEBPFProfilingTaskDAO.class,
             IEBPFProfilingScheduleDAO.class,
             IEBPFProfilingDataDAO.class,
+            IContinuousProfilingPolicyDAO.class,
             IServiceLabelDAO.class,
             ITagAutoCompleteQueryDAO.class,
-            IZipkinQueryDAO.class
+            IZipkinQueryDAO.class,
+            IOTLPTraceQueryDAO.class,
+            ISpanAttachedEventQueryDAO.class,
+            IHierarchyQueryDAO.class,
+            IAsyncProfilerTaskQueryDAO.class,
+            IAsyncProfilerTaskLogQueryDAO.class,
+            IJFRDataQueryDAO.class,
+            IPprofTaskQueryDAO.class,
+            IPprofTaskLogQueryDAO.class,
+            IPprofDataQueryDAO.class,
+            StorageTTLStatusQuery.class,
+            // Exposed for the runtime-rule reconciler — it calls ModelInstaller.isExists
+            // after a hot-apply to verify DDL landed (BanyanDB swallows ALREADY_EXISTS on
+            // shape-changing re-creates, so post-verify is the only way to detect silent
+            // schema divergence).
+            ModelInstaller.class,
+            // Exposed so the runtime-rule receiver can persist / list / delete RuntimeRule
+            // rows independent of the generic IManagementDAO path.
+            RuntimeRuleManagementDAO.class,
         };
     }
 }

@@ -1,15 +1,30 @@
+# Analysis Native Streaming Traces and Service Mesh Traffic
+
+The traces in SkyWalking native format and Service Mesh Traffic(Access Log in gRPC) are able to be analyzed by OAL,
+to build metrics of services, service instances and endpoints, and to build topology/dependency of services, service 
+instances and endpoints(traces-oriented analysis only).
+
+The spans of traces relative with RPC, such as HTTP, gRPC, Dubbo, RocketMQ, Kafka, would be converted to service input/output 
+traffic, like access logs collected from service mesh. Both of those traffic would be cataloged as the defined sources
+in the `Observability Analysis Language` engine.
+
+The metrics are customizable through Observability Analysis Language(OAL) scripts, 
+and the topology/dependency is built by the SkyWalking OAP kernel automatically without
+explicit OAL scripts.
+
 # Observability Analysis Language
 OAL(Observability Analysis Language) serves to analyze incoming data in streaming mode. 
 
 OAL focuses on metrics in Service, Service Instance and Endpoint. Therefore, the language is easy to 
 learn and use.
 
-
-Since 6.3, the OAL engine is embedded in OAP server runtime as `oal-rt`(OAL Runtime).
 OAL scripts are now found in the `/config` folder, and users could simply change and reboot the server to run them.
-However, the OAL script is a compiled language, and the OAL Runtime generates java codes dynamically.
+However, the OAL script is a compiled language, and the OAL Runtime generates java codes dynamically. Don't expect to mount
+the changes of those scripts in the runtime.
+If your OAP servers are running in a cluster mode, these script defined metrics should be aligned.
 
-You can open set `SW_OAL_ENGINE_DEBUG=Y` at system env to see which classes are generated.
+You can set `SW_DYNAMIC_CLASS_ENGINE_DEBUG=Y` at system env to dump generated `.class` files to disk.
+See [Dynamic Code Generation and Debugging](../operation/dynamic-code-generation-debugging.md) for details.
 
 ## Grammar
 Scripts should be named `*.oal`
@@ -33,10 +48,18 @@ See [Scope Definitions](scope-definitions.md), where you can find all existing S
 
 
 ## Filter
-Use filter to build conditions for the value of fields by using field name and expression. 
+Use filter to build conditions for the value of fields by using field name and expression.
 
-The expressions support linking by `and`, `or` and `(...)`. 
-The OPs support `==`, `!=`, `>`, `<`, `>=`, `<=`, `in [...]` ,`like %...`, `like ...%` , `like %...%` , `contain` and `not contain`, with type detection based on field type. In the event of incompatibility, compile or code generation errors may be triggered. 
+The filter expressions run as a chain, generally connected with `logic AND`.
+Type detection is based on field type. In the event of incompatibility, compile or code generation errors may be triggered.
+
+Supported operators:
+- Comparison: `==`, `!=`, `>`, `<`, `>=`, `<=`
+- Collection: `in [...]` (e.g., `name in ("Endpoint1", "Endpoint2")`)
+- String matching: `like %...`, `like ...%`, `like %...%` (e.g., `name like "serv%"`)
+- Tag matching: `contain`, `not contain` (e.g., `tags contain "http.method:GET"`) 
+
+With `>`, `>=`, `<` and `<=`, a number is compared in the type of a `long` or `double` field, and with `==` in the type of a `long` field, e.g. `filter(sideCar.internalRequestLatencyNanos >= 0)`.
 
 ## Aggregation Function
 The default functions are provided by the SkyWalking OAP core, and it is possible to implement additional functions. 
@@ -63,7 +86,12 @@ Parameter (2) is the `denominator` condition.
 - `count`. The sum of calls per scope entity.
 > service_calls_sum = from(Service.*).count();
 
-In this case, the number of calls of each service. 
+In this case, the number of calls of each service.
+
+- `cpm`. Calls Per Minute. The total number of calls divided by the duration in minutes.
+> service_cpm = from(Service.*).cpm();
+
+In this case, the CPM of each service.
 
 - `histogram`. See [Heatmap in WIKI](https://en.wikipedia.org/wiki/Heat_map).
 > service_heatmap = from(Service.latency).histogram(100, 20);
@@ -80,20 +108,33 @@ Parameter (1) is the service name, which reflects the Apdex threshold value load
 Parameter (2) is the status of this request. The status(success/failure) reflects the Apdex calculation.
 
 - `p99`, `p95`, `p90`, `p75`, `p50`. See [percentile in WIKI](https://en.wikipedia.org/wiki/Percentile).
-> service_percentile = from(Service.latency).percentile(10);
+> service_percentile = from(Service.latency).percentile2(10);
 
-**percentile** is the first multiple-value metric, which has been introduced since 7.0.0. As a metric with multiple values, it could be queried through the `getMultipleLinearIntValues` GraphQL query.
+**percentile (deprecated since 10.0.0)** is the first multiple-value metric, which has been introduced since 7.0.0. As a metric with multiple values, it could be queried through the `getMultipleLinearIntValues` GraphQL query.
+**percentile2** Since 10.0.0, the `percentile` function has been instead by `percentile2`. The `percentile2` function is a labeled-value metric with default label name `p` and label values `50`,`75`,`90`,`95`,`99`.
 In this case, see `p99`, `p95`, `p90`, `p75`, and `p50` of all incoming requests. The parameter is precise to a latency at p99, such as in the above case, and 120ms and 124ms are considered to produce the same response time.
 
 In this case, the p99 value of all incoming requests. The parameter is precise to a latency at p99, such as in the above case, and 120ms and 124ms are considered to produce the same response time.
+
+- `labelCount`. The count of the label value.
+> drop_reason_count = from(CiliumService.*).filter(verdict == "dropped").labelCount(dropReason, 100);
+
+In this case, the count of the drop reason of each Cilium service, max support calculate `100` reasons(optional configuration). 
+
+- `labelAvg`. The avg of the label value.
+> drop_reason_avg = from(BrowserResourcePerf.*).labelAvg(name, duration, 100);
+
+In this case, the avg of the duration of each browser resource file, max support calculate `100` resource file(optional configuration).
 
 ## Metrics name
 The metrics name for storage implementor, alarm and query modules. The type inference is supported by core.
 
 ## Group
-All metrics data will be grouped by Scope.ID and min-level TimeBucket. 
+All metrics data will be grouped by Scope.ID and min-level TimeBucket.
 
 - In the `Endpoint` scope, the Scope.ID is same as the Endpoint ID (i.e. the unique ID based on service and its endpoint).
+
+The `Minute` level aggregation is enforced by default. Additional time bucket aggregations (`Hour`, `Day`) are also enabled by default and can be configured via `core/downsampling` in `application.yml`.
 
 ## Cast
 Fields of source are static type. In some cases, the type required by the filter expression and aggregation function doesn't 
@@ -112,6 +153,13 @@ Cast statement is supported in
 2. **Filter expression**. `.filter((cast)tag["transmission.latency"] > 0)`
 3. **Aggregation function parameter**. `.longAvg((cast)strField1== 1,  (cast)strField2)`
 
+## Decorator
+`decorator` is to select a specific decorator to decorate the source for the metrics.
+> service_resp_time = from(Service.latency).longAvg().decorator("ServiceDecorator");
+
+In this case, the `ServiceDecorator` is the `Java Class simple name` which used to decorate the source of `Service` before the aggregation function.
+This function is used to add additional attributes to the metrics. More details, see [Metrics Additional Attributes](metrics-additional-attributes.md).
+
 ## Disable
 `Disable` is an advanced statement in OAL, which is only used in certain cases.
 Some of the aggregation and metrics are defined through core hard codes. Examples include `segment` and `top_n_database_statement`.
@@ -122,23 +170,23 @@ By default, none of them are disabled.
 
 ## Examples
 ```
-// Calculate p99 of both Endpoint1 and Endpoint2
-endpoint_p99 = from(Endpoint.latency).filter(name in ("Endpoint1", "Endpoint2")).summary(0.99)
+// Calculate percentile(s) of both Endpoint1 and Endpoint2
+endpoint_p99 = from(Endpoint.latency).filter(name in ("Endpoint1", "Endpoint2")).percentile2(10)
 
-// Calculate p99 of Endpoint name started with `serv`
-serv_Endpoint_p99 = from(Endpoint.latency).filter(name like "serv%").summary(0.99)
+// Calculate percentile(s) of Endpoint name started with `serv`
+serv_Endpoint_p99 = from(Endpoint.latency).filter(name like "serv%").percentile2(10)
 
 // Calculate the avg response time of each Endpoint
-endpoint_resp_time = from(Endpoint.latency).avg()
+endpoint_resp_time = from(Endpoint.latency).longAvg()
 
 // Calculate the p50, p75, p90, p95 and p99 of each Endpoint by 50 ms steps.
-endpoint_percentile = from(Endpoint.latency).percentile(10)
+endpoint_percentile = from(Endpoint.latency).percentile2(10)
 
 // Calculate the percent of response status is true, for each service.
 endpoint_success = from(Endpoint.*).filter(status == true).percent()
 
 // Calculate the sum of response code in [404, 500, 503], for each service.
-endpoint_abnormal = from(Endpoint.*).filter(responseCode in [404, 500, 503]).count()
+endpoint_abnormal = from(Endpoint.*).filter(httpResponseStatusCode in [404, 500, 503]).count()
 
 // Calculate the sum of request type in [RequestType.RPC, RequestType.gRPC], for each service.
 endpoint_rpc_calls_sum = from(Endpoint.*).filter(type in [RequestType.RPC, RequestType.gRPC]).count()

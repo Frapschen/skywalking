@@ -18,12 +18,15 @@
 
 package org.apache.skywalking.oap.server.core.source;
 
+import com.google.gson.JsonObject;
 import java.util.List;
 import java.util.Map;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.skywalking.oap.server.core.analysis.ISourceDecorator;
 import org.apache.skywalking.oap.server.core.analysis.Layer;
+import org.apache.skywalking.oap.server.core.analysis.SourceDecoratorManager;
 import org.apache.skywalking.oap.server.library.util.StringUtil;
 import org.apache.skywalking.oap.server.core.analysis.IDManager;
 
@@ -55,6 +58,7 @@ public class Endpoint extends Source {
     private String name;
     @Getter
     @ScopeDefaultColumn.DefinedByField(columnName = "service_id")
+    @ScopeDefaultColumn.BanyanDB(shardingKeyIdx = 0)
     private String serviceId;
     @Getter
     @Setter
@@ -89,6 +93,39 @@ public class Endpoint extends Source {
     @Getter
     @Setter
     private Layer serviceLayer;
+    @Getter
+    @Setter
+    @ScopeDefaultColumn.DefinedByField(columnName = "attr0", isAttribute = true)
+    private String attr0;
+    @Getter
+    @Setter
+    @ScopeDefaultColumn.DefinedByField(columnName = "attr1", isAttribute = true)
+    private String attr1;
+    @Getter
+    @Setter
+    @ScopeDefaultColumn.DefinedByField(columnName = "attr2", isAttribute = true)
+    private String attr2;
+    @Getter
+    @Setter
+    @ScopeDefaultColumn.DefinedByField(columnName = "attr3", isAttribute = true)
+    private String attr3;
+    @Getter
+    @Setter
+    @ScopeDefaultColumn.DefinedByField(columnName = "attr4", isAttribute = true)
+    private String attr4;
+    @Getter
+    @Setter
+    @ScopeDefaultColumn.DefinedByField(columnName = "attr5", isAttribute = true)
+    private String attr5;
+
+    /**
+     * Get the decorator through given name and invoke.
+     * @param decorator The decorator class simpleName.
+     */
+    public void decorate(String decorator) {
+        ISourceDecorator<ISource> sourceDecorator = SourceDecoratorManager.DECORATOR_MAP.get(decorator);
+        sourceDecorator.decorate(this);
+    }
 
     @Override
     public void prepare() {
@@ -97,5 +134,30 @@ public class Endpoint extends Source {
 
     public String getTag(String key) {
         return originalTags.get(key);
+    }
+
+    @Override
+    public String toJson() {
+        final JsonObject obj = new JsonObject();
+        obj.addProperty("scope", scope());
+        obj.addProperty("entityId", getEntityId());
+        obj.addProperty("timeBucket", getTimeBucket());
+        obj.addProperty("name", name);
+        obj.addProperty("serviceId", serviceId);
+        obj.addProperty("serviceName", serviceName);
+        obj.addProperty("serviceLayer", serviceLayer == null ? null : serviceLayer.name());
+        obj.addProperty("serviceInstanceName", serviceInstanceName);
+        obj.addProperty("latency", latency);
+        obj.addProperty("status", status);
+        obj.addProperty("httpResponseStatusCode", httpResponseStatusCode);
+        obj.addProperty("rpcStatusCode", rpcStatusCode);
+        obj.addProperty("type", type == null ? null : type.name());
+        obj.addProperty("attr0", attr0);
+        obj.addProperty("attr1", attr1);
+        obj.addProperty("attr2", attr2);
+        obj.addProperty("attr3", attr3);
+        obj.addProperty("attr4", attr4);
+        obj.addProperty("attr5", attr5);
+        return obj.toString();
     }
 }

@@ -30,22 +30,17 @@ import org.apache.skywalking.oap.server.core.storage.annotation.BanyanDB;
 @RequiredArgsConstructor
 public class BanyanDBExtension {
     /**
-     * Sharding key is used to group time series data per metric of one entity. See {@link
-     * BanyanDB.ShardingKey#index()}.
+     * SeriesID is used to group time series data per metric of one entity. See {@link
+     * BanyanDB.SeriesID#index()}.
      *
      * @since 9.1.0 moved into BanyanDBExtension
      * @since 9.0.0 added into {@link ModelColumn}
      */
     @Getter
-    private final int shardingKeyIdx;
+    private final int seriesIDIdx;
 
-    /**
-     * Global index column.
-     *
-     * @since 9.1.0
-     */
     @Getter
-    private final boolean isGlobalIndexing;
+    private final int shardingKeyIdx;
 
     /**
      * {@link BanyanDB.NoIndexing} exists to override {@link ModelColumn#shouldIndex()}, or be the same as {@link
@@ -54,6 +49,40 @@ public class BanyanDBExtension {
      * @since 9.1.0
      */
     private final boolean shouldIndex;
+
+    /**
+     * indexType is the type of index built for a {@link ModelColumn} in BanyanDB.
+     *
+     * @since 9.3.0
+     */
+    @Getter
+    private final BanyanDB.IndexRule.IndexType indexType;
+
+    /**
+     * A column belong to a measure's field.
+     */
+    @Getter
+    private final boolean isMeasureField;
+
+    /**
+     * The analyzer policy appointed to fuzzy query, especially for BanyanDB.
+     * See {@link BanyanDB.MatchQuery}.
+     */
+    @Getter
+    private final BanyanDB.MatchQuery.AnalyzerType analyzer;
+
+    /**
+     * Enable sort for this column. See {@link BanyanDB.EnableSort}.
+     */
+    @Getter
+    private final boolean enableSort;
+
+    /**
+     * @return true if this column is a part of SeriesID
+     */
+    public boolean isSeriesID() {
+        return this.seriesIDIdx > -1;
+    }
 
     /**
      * @return true if this column is a part of sharding key

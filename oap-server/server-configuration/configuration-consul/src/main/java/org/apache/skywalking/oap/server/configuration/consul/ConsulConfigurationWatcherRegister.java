@@ -20,10 +20,10 @@ package org.apache.skywalking.oap.server.configuration.consul;
 
 import com.google.common.base.Splitter;
 import com.google.common.net.HostAndPort;
-import com.orbitz.consul.Consul;
-import com.orbitz.consul.KeyValueClient;
-import com.orbitz.consul.cache.KVCache;
-import com.orbitz.consul.model.kv.Value;
+import org.kiwiproject.consul.Consul;
+import org.kiwiproject.consul.KeyValueClient;
+import org.kiwiproject.consul.cache.KVCache;
+import org.kiwiproject.consul.model.kv.Value;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -34,12 +34,12 @@ import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.skywalking.oap.server.configuration.api.ConfigTable;
-import org.apache.skywalking.oap.server.configuration.api.ConfigWatcherRegister;
+import org.apache.skywalking.oap.server.configuration.api.FetchingConfigWatcherRegister;
 import org.apache.skywalking.oap.server.configuration.api.GroupConfigTable;
 
 @SuppressWarnings("UnstableApiUsage")
 @Slf4j
-public class ConsulConfigurationWatcherRegister extends ConfigWatcherRegister {
+public class ConsulConfigurationWatcherRegister extends FetchingConfigWatcherRegister {
     private static final int DEFAULT_PORT = 8500;
 
     private final KeyValueClient consul;
@@ -59,7 +59,8 @@ public class ConsulConfigurationWatcherRegister extends ConfigWatcherRegister {
                                                                                 .withDefaultPort(DEFAULT_PORT))
                                                  .collect(Collectors.toList());
 
-        Consul.Builder builder = Consul.builder().withConnectTimeoutMillis(3000);
+        Consul.Builder builder = Consul.builder().withConnectTimeoutMillis(3_000)
+                                       .withReadTimeoutMillis(20_000);
 
         if (hostAndPorts.size() == 1) {
             builder.withHostAndPort(hostAndPorts.get(0));

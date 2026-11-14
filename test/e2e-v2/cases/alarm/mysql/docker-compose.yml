@@ -13,14 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version: '2.1'
-
 services:
   mysql:
     image: mysql/mysql-server:8.0.13
     networks:
       - e2e
     expose:
+      - 3306
+    ports:
       - 3306
     environment:
       - MYSQL_ROOT_PASSWORD=root@1234
@@ -39,9 +39,10 @@ services:
     environment:
       SW_STORAGE: mysql
       SW_SEARCHABLE_ALARM_TAG_KEYS: level,receivers
-    entrypoint: ['sh', '-c', '/download-mysql.sh && /skywalking/docker-entrypoint.sh']
+    entrypoint: ['sh', '-c', '/download-mysql.sh /skywalking/oap-libs && /skywalking/docker-entrypoint.sh']
     ports:
       - 12800
+      - 1234
     depends_on:
       mysql:
         condition: service_healthy

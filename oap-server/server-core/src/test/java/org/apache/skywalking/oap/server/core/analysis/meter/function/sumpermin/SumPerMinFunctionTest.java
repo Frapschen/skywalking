@@ -22,42 +22,40 @@ import org.apache.skywalking.oap.server.core.analysis.Layer;
 import org.apache.skywalking.oap.server.core.analysis.TimeBucket;
 import org.apache.skywalking.oap.server.core.analysis.meter.MeterEntity;
 import org.apache.skywalking.oap.server.core.analysis.meter.function.AcceptableValue;
-import org.apache.skywalking.oap.server.core.analysis.meter.function.latest.LatestFunction;
 import org.apache.skywalking.oap.server.core.config.NamingControl;
 import org.apache.skywalking.oap.server.core.config.group.EndpointNameGrouping;
 import org.apache.skywalking.oap.server.core.storage.type.HashMapConverter;
 import org.apache.skywalking.oap.server.core.storage.type.StorageBuilder;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mockito;
-import org.mockito.runners.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Map;
 
-import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertThat;
+import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class SumPerMinFunctionTest {
 
     private SumPerMinFunctionInst function;
 
-    @BeforeClass
+    @BeforeAll
     public static void setup() {
         MeterEntity.setNamingControl(
             new NamingControl(512, 512, 512, new EndpointNameGrouping()));
     }
 
-    @Before
+    @BeforeEach
     public void before() {
         function = new SumPerMinFunctionInst();
         function.setTimeBucket(TimeBucket.getMinuteTimeBucket(System.currentTimeMillis()));
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDown() {
         MeterEntity.setNamingControl(null);
     }
@@ -67,11 +65,11 @@ public class SumPerMinFunctionTest {
         long time1 = 1597113318673L;
         function.accept(MeterEntity.newService("sum_sync_time", Layer.GENERAL), time1);
         function.calculate();
-        assertThat(function.getValue(), is(time1));
+        assertThat(function.getValue()).isEqualTo(time1);
         long time2 = 1597113447737L;
         function.accept(MeterEntity.newService("sum_sync_time", Layer.GENERAL), time2);
         function.calculate();
-        assertThat(function.getValue(), is(time1 + time2));
+        assertThat(function.getValue()).isEqualTo(time1 + time2);
     }
 
     @Test
@@ -81,7 +79,7 @@ public class SumPerMinFunctionTest {
         function.accept(MeterEntity.newService("sum_sync_time", Layer.GENERAL), time1);
         function.accept(MeterEntity.newService("sum_sync_time", Layer.GENERAL), time2);
         function.calculate();
-        assertThat(function.getValue(), is(time1 + time2));
+        assertThat(function.getValue()).isEqualTo(time1 + time2);
     }
 
     @Test
@@ -89,28 +87,36 @@ public class SumPerMinFunctionTest {
         long time1 = 1597113318673L;
         long time2 = 1597113447737L;
         function.setTimeBucket(TimeBucket.getMinuteTimeBucket(System.currentTimeMillis()));
-        function.accept(MeterEntity.newService("sum_sync_time", Layer.GENERAL), time1);
-        function.accept(MeterEntity.newService("sum_sync_time", Layer.GENERAL), time2);
+        MeterEntity meterEntity = MeterEntity.newService("sum_sync_time", Layer.GENERAL);
+        meterEntity.setAttr0("testAttr");
+        function.accept(meterEntity, time1);
+        function.accept(meterEntity, time2);
         function.calculate();
         final SumPerMinFunction hourFunction = (SumPerMinFunction) function.toHour();
         hourFunction.calculate();
-        assertThat(hourFunction.getValue(), is((time1 + time2) / 60));
+        assertThat(hourFunction.getValue()).isEqualTo((time1 + time2) / 60);
+        assertThat(hourFunction.getAttr0()).isEqualTo(function.getAttr0());
     }
 
     @Test
     public void testSerialize() {
         long time = 1597113447737L;
-        function.accept(MeterEntity.newService("sum_sync_time", Layer.GENERAL), time);
-        LatestFunction function2 = Mockito.spy(LatestFunction.class);
+        MeterEntity meterEntity = MeterEntity.newService("sum_sync_time", Layer.GENERAL);
+        meterEntity.setAttr0("testAttr");
+        function.accept(meterEntity, time);
+        SumPerMinFunction function2 = Mockito.spy(SumPerMinFunction.class);
         function2.deserialize(function.serialize().build());
-        assertThat(function2.getEntityId(), is(function.getEntityId()));
-        assertThat(function2.getTimeBucket(), is(function.getTimeBucket()));
+        assertThat(function2.getEntityId()).isEqualTo(function.getEntityId());
+        assertThat(function2.getTimeBucket()).isEqualTo(function.getTimeBucket());
+        assertThat(function2.getAttr0()).isEqualTo(function.getAttr0());
     }
 
     @Test
     public void testBuilder() throws IllegalAccessException, InstantiationException {
         long time = 1597113447737L;
-        function.accept(MeterEntity.newService("sum_sync_time", Layer.GENERAL), time);
+        MeterEntity meterEntity = MeterEntity.newService("sum_sync_time", Layer.GENERAL);
+        meterEntity.setAttr0("testAttr");
+        function.accept(meterEntity, time);
         function.calculate();
         StorageBuilder<SumPerMinFunction> storageBuilder = function.builder().newInstance();
 
@@ -120,7 +126,8 @@ public class SumPerMinFunctionTest {
         map.put(SumPerMinFunction.VALUE, map.get(SumPerMinFunction.VALUE));
 
         SumPerMinFunction function2 = storageBuilder.storage2Entity(new HashMapConverter.ToEntity(map));
-        assertThat(function2.getValue(), is(function.getValue()));
+        assertThat(function2.getValue()).isEqualTo(function.getValue());
+        assertThat(function2.getAttr0()).isEqualTo(function.getAttr0());
     }
 
     private static class SumPerMinFunctionInst extends SumPerMinFunction {

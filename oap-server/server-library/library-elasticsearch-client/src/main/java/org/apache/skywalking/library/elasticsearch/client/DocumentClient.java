@@ -86,7 +86,7 @@ public final class DocumentClient {
     }
 
     @SneakyThrows
-    public Optional<Documents> mGet(String type, Map<String, List<String>> indexIds) {
+    public Optional<Documents> mget(String type, Map<String, List<String>> indexIds) {
         final CompletableFuture<Optional<Documents>> future =
             version.thenCompose(
                 v -> client.execute(v.requestFactory().document().mget(type, indexIds))
@@ -153,6 +153,28 @@ public final class DocumentClient {
             }
             if (log.isDebugEnabled()) {
                 log.debug("Succeeded updating doc: {}, params: {}", request, params);
+            }
+        });
+        future.join();
+    }
+
+    @SneakyThrows
+    public void deleteById(String index, String type, String id, Map<String, Object> params) {
+        final CompletableFuture<Void> future = version.thenCompose(
+            v -> client.execute(v.requestFactory().document().deleteById(index, type, id, params))
+                       .aggregate().thenAccept(response -> {
+                    final HttpStatus status = response.status();
+                    if (status != HttpStatus.OK) {
+                        throw new RuntimeException(response.contentUtf8());
+                    }
+                }));
+        future.whenComplete((result, exception) -> {
+            if (exception != null) {
+                log.error("Failed to delete doc by id {} in index {}, params: {}", id, index, params, exception);
+                return;
+            }
+            if (log.isDebugEnabled()) {
+                log.debug("Succeeded delete doc by id {} in index {}, params: {}", id, params, index);
             }
         });
         future.join();

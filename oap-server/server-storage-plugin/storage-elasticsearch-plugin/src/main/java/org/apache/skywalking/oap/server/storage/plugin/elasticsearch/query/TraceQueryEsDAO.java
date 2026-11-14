@@ -23,17 +23,20 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import javax.annotation.Nullable;
 import org.apache.skywalking.library.elasticsearch.requests.search.BoolQueryBuilder;
 import org.apache.skywalking.library.elasticsearch.requests.search.Query;
 import org.apache.skywalking.library.elasticsearch.requests.search.RangeQueryBuilder;
 import org.apache.skywalking.library.elasticsearch.requests.search.Search;
 import org.apache.skywalking.library.elasticsearch.requests.search.SearchBuilder;
 import org.apache.skywalking.library.elasticsearch.requests.search.Sort;
+import org.apache.skywalking.library.elasticsearch.requests.search.SearchParams;
 import org.apache.skywalking.library.elasticsearch.response.search.SearchHit;
 import org.apache.skywalking.library.elasticsearch.response.search.SearchResponse;
 import org.apache.skywalking.oap.server.core.analysis.IDManager;
 import org.apache.skywalking.oap.server.core.analysis.manual.searchtag.Tag;
 import org.apache.skywalking.oap.server.core.analysis.manual.segment.SegmentRecord;
+import org.apache.skywalking.oap.server.core.query.input.Duration;
 import org.apache.skywalking.oap.server.core.query.type.BasicTrace;
 import org.apache.skywalking.oap.server.core.query.type.QueryOrder;
 import org.apache.skywalking.oap.server.core.query.type.Span;
@@ -47,7 +50,11 @@ import org.apache.skywalking.oap.server.library.util.StringUtil;
 import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.ElasticSearchConverter;
 import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.EsDAO;
 import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.IndexController;
-import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.TimeRangeIndexNameGenerator;
+import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.IndexFamily;
+import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.IndexNames;
+import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.RoutingUtils;
+
+import static java.util.Objects.nonNull;
 
 public class TraceQueryEsDAO extends EsDAO implements ITraceQueryDAO {
 
@@ -59,8 +66,7 @@ public class TraceQueryEsDAO extends EsDAO implements ITraceQueryDAO {
     }
 
     @Override
-    public TraceBrief queryBasicTraces(long startSecondTB,
-                                       long endSecondTB,
+    public TraceBrief queryBasicTraces(Duration duration,
                                        long minDuration,
                                        long maxDuration,
                                        String serviceId,
@@ -72,8 +78,14 @@ public class TraceQueryEsDAO extends EsDAO implements ITraceQueryDAO {
                                        TraceState traceState,
                                        QueryOrder queryOrder,
                                        final List<Tag> tags) throws IOException {
+        long startSecondTB = 0;
+        long endSecondTB = 0;
+        if (nonNull(duration)) {
+            startSecondTB = duration.getStartTimeBucketInSec();
+            endSecondTB = duration.getEndTimeBucketInSec();
+        }
         final BoolQueryBuilder query = Query.bool();
-        if (IndexController.LogicIndicesRegister.isPhysicalTable(SegmentRecord.INDEX_NAME)) {
+        if (IndexController.LogicIndicesRegister.isMergedTable(SegmentRecord.INDEX_NAME)) {
             query.must(Query.term(IndexController.LogicIndicesRegister.RECORD_TABLE_NAME, SegmentRecord.INDEX_NAME));
         }
 
@@ -112,7 +124,15 @@ public class TraceQueryEsDAO extends EsDAO implements ITraceQueryDAO {
                 break;
         }
 
-        final SearchBuilder search = Search.builder().query(query);
+        final SearchBuilder search =
+            Search.builder()
+                .query(query)
+                .source(SegmentRecord.TRACE_ID)
+                .source(SegmentRecord.SEGMENT_ID)
+                .source(SegmentRecord.ENDPOINT_ID)
+                .source(SegmentRecord.START_TIME)
+                .source(SegmentRecord.LATENCY)
+                .source(SegmentRecord.IS_ERROR);
 
         switch (queryOrder) {
             case BY_START_TIME:
@@ -129,12 +149,8 @@ public class TraceQueryEsDAO extends EsDAO implements ITraceQueryDAO {
         }
         search.size(limit).from(from);
 
-        final SearchResponse response = getClient().search(
-            new TimeRangeIndexNameGenerator(
-                IndexController.LogicIndicesRegister.getPhysicalTableName(SegmentRecord.INDEX_NAME),
-                startSecondTB,
-                endSecondTB
-            ), search.build());
+        final SearchResponse response = searchDebuggable(
+            IndexNames.rangeIndices(IndexFamily.of(SegmentRecord.INDEX_NAME), duration), search.build());
         final TraceBrief traceBrief = new TraceBrief();
 
         for (SearchHit searchHit : response.getHits().getHits()) {
@@ -160,7 +176,7 @@ public class TraceQueryEsDAO extends EsDAO implements ITraceQueryDAO {
     }
 
     @Override
-    public List<SegmentRecord> queryByTraceId(String traceId) throws IOException {
+    public List<SegmentRecord> queryByTraceId(String traceId, @Nullable Duration duration) throws IOException {
         final String index =
             IndexController.LogicIndicesRegister.getPhysicalTableName(SegmentRecord.INDEX_NAME);
 
@@ -169,8 +185,52 @@ public class TraceQueryEsDAO extends EsDAO implements ITraceQueryDAO {
                   .query(Query.term(SegmentRecord.TRACE_ID, traceId))
                   .size(segmentQueryMaxSize);
 
-        final SearchResponse response = getClient().search(index, search.build());
+        SearchParams searchParams = new SearchParams();
+        RoutingUtils.addRoutingValueToSearchParam(searchParams, traceId);
 
+        final SearchResponse response = searchDebuggable(index, search.build(), searchParams);
+
+        return buildRecords(response);
+    }
+
+    @Override
+    public List<SegmentRecord> queryBySegmentIdList(List<String> segmentIdList, @Nullable Duration duration) throws IOException {
+        final String index =
+            IndexController.LogicIndicesRegister.getPhysicalTableName(SegmentRecord.INDEX_NAME);
+
+        final SearchBuilder search =
+            Search.builder()
+                .query(Query.terms(SegmentRecord.SEGMENT_ID, segmentIdList))
+                .size(segmentQueryMaxSize);
+
+        SearchParams searchParams = new SearchParams();
+        final SearchResponse response = getClient().search(index, search.build(), searchParams);
+
+        return buildRecords(response);
+    }
+
+    @Override
+    public List<SegmentRecord> queryByTraceIdWithInstanceId(List<String> traceIdList, List<String> instanceIdList, @Nullable Duration duration) throws IOException {
+        final String index =
+            IndexController.LogicIndicesRegister.getPhysicalTableName(SegmentRecord.INDEX_NAME);
+
+        final SearchBuilder search =
+            Search.builder()
+                .query(Query.bool().must(Query.terms(SegmentRecord.TRACE_ID, traceIdList)).must(Query.terms(SegmentRecord.SERVICE_INSTANCE_ID, instanceIdList)))
+                .size(segmentQueryMaxSize);
+
+        SearchParams searchParams = new SearchParams();
+        final SearchResponse response = getClient().search(index, search.build(), searchParams);
+
+        return buildRecords(response);
+    }
+
+    @Override
+    public List<Span> doFlexibleTraceQuery(String traceId) throws IOException {
+        return Collections.emptyList();
+    }
+
+    private List<SegmentRecord> buildRecords(SearchResponse response) {
         List<SegmentRecord> segmentRecords = new ArrayList<>();
         for (SearchHit searchHit : response.getHits().getHits()) {
             SegmentRecord segmentRecord = new SegmentRecord.Builder().storage2Entity(
@@ -178,10 +238,5 @@ public class TraceQueryEsDAO extends EsDAO implements ITraceQueryDAO {
             segmentRecords.add(segmentRecord);
         }
         return segmentRecords;
-    }
-
-    @Override
-    public List<Span> doFlexibleTraceQuery(String traceId) throws IOException {
-        return Collections.emptyList();
     }
 }

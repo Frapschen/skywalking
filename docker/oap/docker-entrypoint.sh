@@ -1,3 +1,4 @@
+
 #!/bin/sh
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
@@ -27,7 +28,12 @@ if [ "$(ls -A $EXT_CONFIG_DIR)" ]; then
   cp -vfRL ${EXT_CONFIG_DIR}/* config/
 fi
 
-CLASSPATH="config:$CLASSPATH"
+if [ -z "$CLASSPATH" ]; then
+  CLASSPATH="config"
+else
+  CLASSPATH="config:$CLASSPATH"
+fi
+
 for i in oap-libs/*.jar
 do
     CLASSPATH="$i:$CLASSPATH"

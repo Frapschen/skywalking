@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version: '2.1'
-
 services:
   oap:
     extends:
@@ -29,6 +27,13 @@ services:
       SW_CORE_GRPC_SSL_TRUSTED_CA_PATH: /skywalking/certs/ca.crt
     ports:
       - 12800
+
+  banyandb:
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: banyandb
+    ports:
+      - 17912
 
   provider:
     extends:

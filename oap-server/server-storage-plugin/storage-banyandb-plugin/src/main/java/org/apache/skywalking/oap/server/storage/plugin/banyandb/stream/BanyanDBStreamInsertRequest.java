@@ -20,11 +20,16 @@ package org.apache.skywalking.oap.server.storage.plugin.banyandb.stream;
 
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
-import org.apache.skywalking.banyandb.v1.client.StreamWrite;
+import org.apache.skywalking.library.banyandb.v1.client.StreamWrite;
 import org.apache.skywalking.oap.server.library.client.request.InsertRequest;
 
 @RequiredArgsConstructor
 @Getter
 public class BanyanDBStreamInsertRequest implements InsertRequest {
     private final StreamWrite streamWrite;
+
+    @Override
+    public void onInsertCompleted() {
+
+    }
 }

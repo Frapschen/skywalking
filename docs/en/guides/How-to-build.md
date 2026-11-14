@@ -16,7 +16,7 @@ If you need to execute build behind the proxy, edit the *.mvn/jvm.config* and se
 ```
 
 ### Building from GitHub
-1. Prepare git, JDK8+, and Maven 3.6+.
+1. Prepare git, JDK 11, 17, 21, 25 (LTS versions), and Maven 3.6+.
 1. Clone the project.
 
     If you want to build a release from source codes, set a `tag name` by using `git clone -b [tag_name] ...` while cloning.
@@ -41,7 +41,7 @@ If you need to execute build behind the proxy, edit the *.mvn/jvm.config* and se
 
 For each official Apache release, there is a complete and independent source code tar, which includes all source codes. You could download it from [SkyWalking Apache download page](http://skywalking.apache.org/downloads/). There is no requirement related to git when compiling this. Just follow these steps.
 
-1. Prepare JDK8+ and Maven 3.6+.
+1. Prepare JDK11+ and Maven 3.6+.
 1. Run `./mvnw clean package -Dmaven.test.skip`.
 1. All packages are in `/dist`.(.tar.gz for Linux and .zip for Windows).
 
@@ -58,16 +58,12 @@ or
 If you intend to compile a single plugin, such as one in the dev stage, you could
 >  cd plugin_module_dir & mvn clean package
 
-- Compile UI and package
->  ./mvnw package -Pui,dist
-
-or
-
-> make build.ui
-
+The web UI is no longer built from this repository — see
+[apache/skywalking-horizon-ui](https://github.com/apache/skywalking-horizon-ui)
+for the standalone UI build.
 
 ### Building docker images
-You can build docker images of `backend` and `ui` with `Makefile` located in root folder.
+You can build the OAP docker image with `Makefile` located in root folder.
 
 Refer to [Build docker image](../../../docker) for more details.
 
@@ -84,4 +80,5 @@ Refer to [Build docker image](../../../docker) for more details.
     * `grpc-java` and `java` folders in **oap-server/exporter/target/generated-sources/protobuf**
     * `grpc-java` and `java` folders in **oap-server/server-configuration/grpc-configuration-sync/target/generated-sources/protobuf**
     * `grpc-java` and `java` folders in **oap-server/server-alarm-plugin/target/generated-sources/protobuf**
+    * `grpc-java` and `java` folders in **oap-server/server-fetcher-plugin/fetcher-proto/target/generated-sources/protobuf**
     * `antlr4` folder in **oap-server/oal-grammar/target/generated-sources**

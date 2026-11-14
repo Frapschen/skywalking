@@ -38,7 +38,7 @@ public class ManagementEsDAO extends EsDAO implements IManagementDAO {
     @Override
     public void insert(Model model, ManagementData managementData) throws IOException {
         String tableName = IndexController.INSTANCE.getTableName(model);
-        String docId = IndexController.INSTANCE.generateDocId(model, managementData.id());
+        String docId = IndexController.INSTANCE.generateDocId(model, managementData.id().build());
         final boolean exist = getClient().existDoc(tableName, docId);
         if (exist) {
             return;
@@ -46,7 +46,7 @@ public class ManagementEsDAO extends EsDAO implements IManagementDAO {
         final ElasticSearchConverter.ToStorage toStorage = new ElasticSearchConverter.ToStorage(model.getName());
         storageBuilder.entity2Storage(managementData, toStorage);
         Map<String, Object> source =
-            IndexController.INSTANCE.appendTableColumn(model, toStorage.obtain());
+            IndexController.INSTANCE.appendTableColumn4ManagementData(model.getName(), toStorage.obtain());
         getClient().forceInsert(tableName, docId, source);
     }
 }

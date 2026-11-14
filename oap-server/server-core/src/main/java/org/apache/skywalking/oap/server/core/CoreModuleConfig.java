@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 import lombok.Getter;
 import lombok.Setter;
+import org.apache.skywalking.oap.server.core.config.SearchableTracesTagsWatcher;
 import org.apache.skywalking.oap.server.core.source.ScopeDefaultColumn;
 import org.apache.skywalking.oap.server.library.module.ModuleConfig;
 
@@ -35,6 +36,15 @@ public class CoreModuleConfig extends ModuleConfig {
     private int restMaxThreads = 200;
     private long restIdleTimeOut = 30000;
     private int restAcceptQueueSize = 0;
+    /**
+     * TLS settings for the core REST server (GraphQL query API). Every OAP HTTP server
+     * exposes the same {@code restSSL*} structure under its own module with dedicated
+     * environment variables. The certificate and private key are read from disk and
+     * reloaded on rotation without a restart.
+     */
+    private boolean restSSLEnabled = false;
+    private String restSSLKeyPath;
+    private String restSSLCertChainPath;
 
     private String gRPCHost;
     private int gRPCPort;
@@ -50,10 +60,6 @@ public class CoreModuleConfig extends ModuleConfig {
      */
     private long l1FlushPeriod = 500;
     /**
-     * Enable database flush session.
-     */
-    private boolean enableDatabaseSession;
-    /**
      * The threshold of session time. Unit is ms. Default value is 70s.
      */
     private long storageSessionTimeout = 70_000;
@@ -62,7 +68,7 @@ public class CoreModuleConfig extends ModuleConfig {
      * The period of doing data persistence. Unit is second.
      */
     @Setter
-    private long persistentPeriod = 25;
+    private int persistentPeriod = 25;
 
     private boolean enableDataKeeperExecutor = true;
 
@@ -71,16 +77,15 @@ public class CoreModuleConfig extends ModuleConfig {
      * The time to live of all metrics data. Unit is day.
      */
 
-    private int metricsDataTTL = 3;
+    private int metricsDataTTL = 7;
     /**
      * The time to live of all record data, including tracing. Unit is Day.
      */
 
-    private int recordDataTTL = 7;
+    private int recordDataTTL = 3;
 
     private int gRPCThreadPoolSize;
 
-    private int gRPCThreadPoolQueueSize;
     /**
      * Timeout for cluster internal communication, in seconds.
      */
@@ -94,6 +99,10 @@ public class CoreModuleConfig extends ModuleConfig {
      * Following are cache setting for none stream(s)
      */
     private long maxSizeOfProfileTask = 10_000L;
+    /**
+     * Following are cache setting for none stream(s)
+     */
+    private long maxSizeOfPprofTask = 10_000L;
     /**
      * Analyze profile snapshots paging size.
      */
@@ -116,7 +125,7 @@ public class CoreModuleConfig extends ModuleConfig {
      * load for memory, network of OAP and storage.
      *
      * But, being activated, user could see the name in the storage entities, which make users easier to use 3rd party
-     * tool, such as Kibana->ES, to query the data by themselves.
+     * tool, such as Kibana-&gt;ES, to query the data by themselves.
      */
     private boolean activeExtraModelColumns = false;
     /**
@@ -142,6 +151,10 @@ public class CoreModuleConfig extends ModuleConfig {
     @Setter
     @Getter
     private String searchableTracesTags = DEFAULT_SEARCHABLE_TAG_KEYS;
+    @Setter
+    @Getter
+    private SearchableTracesTagsWatcher searchableTracesTagsWatcher;
+
     /**
      * Define the set of logs tag keys, which should be searchable through the GraphQL.
      *
@@ -192,6 +205,95 @@ public class CoreModuleConfig extends ModuleConfig {
      * Use -1 to disable it.
      */
     private int httpMaxRequestHeaderSize = 8192;
+
+    /**
+     * The period of HTTP URI pattern recognition. Unit is second.
+     * @since 9.5.0
+     */
+    private int syncPeriodHttpUriRecognitionPattern = 10;
+
+    /**
+     * The training period of HTTP URI pattern recognition. Unit is second.
+     * @since 9.5.0
+     */
+    private int trainingPeriodHttpUriRecognitionPattern = 60;
+
+    /**
+     * The max number of HTTP URIs per service for further URI pattern recognition.
+     * @since 9.5.0
+     */
+    private int maxHttpUrisNumberPerService = 3000;
+
+    /**
+     * The service cache refresh interval, default 10s
+     */
+    @Setter
+    @Getter
+    private int serviceCacheRefreshInterval = 10;
+
+    /**
+     * If disable the hierarchy, the service and instance hierarchy relation will not be built.
+     * And the query of hierarchy will return empty result.
+     */
+    @Setter
+    @Getter
+    private boolean enableHierarchy = true;
+
+    /**
+     * The int value of the max heap memory usage percent.
+     * The default value is 96%.
+     */
+    @Getter
+    private long maxHeapMemoryUsagePercent = 96;
+
+    /**
+     * The long value of the max direct memory usage.
+     * The default max value is -1, representing no limit.
+     */
+    @Getter
+    private long maxDirectMemoryUsage = -1;
+
+    /**
+     * How long, in milliseconds, one MAL lookup step of Kubernetes metadata, such as one {@code retagByK8sMeta} over the
+     * samples of a metric, or the naming of one process, waits in all for metadata not read from the API server yet.
+     * The metadata keeps being read in the background after it, for the next data.
+     */
+    @Getter
+    private long malMetadataReadTimeout = 2000;
+
+    /**
+     * The most Kubernetes metadata reads waiting at once, per lane, as {@code als=<size>,mal=<size>}: {@code als} for
+     * Envoy ALS, the eBPF access log and every read again, {@code mal} for the MAL lookups, which wait. A lane left out,
+     * or set to -1, has no limit. The waiting reads are of distinct keys, such as the IPs seen by the lookups.
+     * <p>
+     * An Object, not a String: the config loader turns a bare number into an Integer, which a String field refuses
+     * before the value is checked, with an error not showing the form.
+     */
+    @Getter
+    private Object k8sMetadataReadQueueSize = "";
+
+    /**
+     * How long, in minutes, cached Kubernetes metadata is kept after it was last written, per cache, as
+     * {@code als=<minutes>,mal=<minutes>}: {@code als} for Envoy ALS, {@code mal} for MAL and the eBPF access log. A
+     * cache left out keeps it 21 minutes. Each is longer than {@link #k8sMetadataRefreshPeriod}. An Object, as
+     * {@link #k8sMetadataReadQueueSize} is.
+     */
+    @Getter
+    private Object k8sMetadataCacheTime = "als=21,mal=21";
+
+    /**
+     * How long, in minutes, cached Kubernetes metadata is used before it is read again from the API server, on its next
+     * use, and a failed read waits before it is retried.
+     */
+    @Getter
+    private int k8sMetadataRefreshPeriod = 3;
+
+    /**
+     * How long, in minutes, a lookup that found nothing, such as for a pod too new for the lists read, is used before
+     * it is read again, on its next use.
+     */
+    @Getter
+    private int k8sMetadataNotFoundRetryPeriod = 1;
 
     public CoreModuleConfig() {
         this.downsampling = new ArrayList<>();

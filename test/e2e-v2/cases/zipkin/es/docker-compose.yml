@@ -13,11 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version: '2.1'
-
 services:
   es:
-    image: elastic/elasticsearch:7.15.0
+    image: elastic/elasticsearch:8.18.8
     expose:
       - 9200
     networks:

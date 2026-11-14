@@ -1,25 +1,31 @@
 # Docker Images
 
-This folder contains Dockerfiles that are used to **build**
-our [OAP Docker images](https://hub.docker.com/r/apache/skywalking-oap-server)
-and [UI Docker image](https://hub.docker.com/r/apache/skywalking-ui). If you want to use the Docker images, please
-check [the user guide for OAP](../docs/en/setup/backend/backend-docker.md)
-and [the user guide for UI](../docs/en/setup/backend/ui-setup.md#start-with-docker-image).
+This folder contains the Dockerfile used to **build** our
+[OAP Docker image](https://hub.docker.com/r/apache/skywalking-oap-server). If you want
+to use the image, please check
+[the user guide for OAP](../docs/en/setup/backend/backend-docker.md).
+
+The web UI is no longer built from this repository — see the
+[SkyWalking Horizon UI](https://github.com/apache/skywalking-horizon-ui) project,
+whose images are published to
+[`ghcr.io/apache/skywalking-horizon-ui`](https://github.com/apache/skywalking-horizon-ui/pkgs/container/skywalking-horizon-ui).
 
 ## Quickstart
 
-You can use `Makefile` located at the root folder to build a docker image with the current codebase.
+You can use `Makefile` located at the root folder to build the OAP docker image
+with the current codebase.
 
 ```shell
 make docker
+# OR skip the tests
+make docker SKIP_TEST=true
 ```
 
 It not only contains the process of building a docker image but also includes all the required steps, for instance, init
-workspace, build artifact from scratch. It builds two images, OAP, and UI.
+workspace, build artifact from scratch. It builds a single OAP image.
 
 ```shell
 docker image ls | grep skywalking
-skywalking/ui                                   latest              a14db4e1d70d        6 minutes ago       800MB
 skywalking/oap                                  latest              2a6084450b44        6 minutes ago       862MB
 ```
 
@@ -40,11 +46,6 @@ apache-skywalking-apm-bin.tar.gz
 
 The distribution tar ball name, for example, `apache-skywalking-apm-bin.tar.gz`.
 
-### `CLI_VERSION`
-
-The [SkyWalking CLI](http://github.com/apache/skywalking-cli) version to be included in the OAP image, it must be an
-official Apache release version.
-
 ### `HUB`
 
 The hub of docker image. The default value is `skywalking`.
@@ -55,10 +56,28 @@ The tag of docker image. The default value is `latest`.
 
 ## Running containers with docker-compose
 
-We can start up backend cluster by docker-compose
+We can start up backend cluster by docker-compose. There are two profiles with
+different storage options that you can choose, `elasticsearch` and `banyandb`.
+
+To start up the backend cluster with `elasticsearch` as the storage, run the
+following command:
 
 ```shell
-docker compose up
+docker compose --profile elasticsearch up
 ```
 
-[docker/.env](./.env) file contains the default elasticsearch tag (`ES_TAG`).
+To start up the backend cluster with `banyandb` as the storage, run the
+following command:
+
+```shell
+docker compose --profile banyandb up
+```
+
+[docker/.env](./.env) file contains some configurations that you can customize,
+such as the Docker image registry and tags.
+
+After the services are up and running, you can send telemetry data to
+`localhost:11800` and access the Horizon UI at <http://localhost:8080>
+(default login `admin` / `admin`, configured in [docker/horizon.yaml](./horizon.yaml)).
+The OAP admin host is exposed on `localhost:17128` (UI templates, runtime-rule
+hot update, DSL debugging, status, inspect).

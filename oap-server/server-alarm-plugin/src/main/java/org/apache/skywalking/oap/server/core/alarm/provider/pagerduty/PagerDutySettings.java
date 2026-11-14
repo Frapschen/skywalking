@@ -18,26 +18,37 @@
 
 package org.apache.skywalking.oap.server.core.alarm.provider.pagerduty;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
 import lombok.Getter;
-import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
 
 import java.util.ArrayList;
 import java.util.List;
+import org.apache.skywalking.oap.server.core.alarm.provider.AlarmHookSettings;
+import org.apache.skywalking.oap.server.core.alarm.provider.AlarmHooksType;
 
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
 @Setter
 @Getter
 @ToString
-public class PagerDutySettings {
+public class PagerDutySettings extends AlarmHookSettings {
+
+    /**
+     * Events API v2 endpoint of the US service region. PagerDuty forwards a request carrying an EU integration key
+     * from here to the EU region, so this default reaches either region, but an EU account should point at
+     * {@code https://events.eu.pagerduty.com/v2/enqueue} directly to keep the payload out of the US region.
+     */
+    public static final String DEFAULT_EVENTS_API_URL = "https://events.pagerduty.com/v2/enqueue";
 
     private String textTemplate;
+    private String recoveryTextTemplate;
 
-    @Builder.Default
+    private String eventsApiUrl = DEFAULT_EVENTS_API_URL;
+
     private List<String> integrationKeys = new ArrayList<>();
+
+    public PagerDutySettings(final String name,
+                             final AlarmHooksType type,
+                             final boolean isDefault) {
+        super(name, type, isDefault);
+    }
 }

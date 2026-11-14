@@ -18,12 +18,6 @@
 
 package org.apache.skywalking.oap.server.core.storage;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import lombok.Data;
 import org.apache.skywalking.oap.server.core.CoreModuleConfig;
 import org.apache.skywalking.oap.server.core.analysis.worker.MetricsPersistentWorker;
@@ -37,9 +31,18 @@ import org.apache.skywalking.oap.server.library.module.ModuleProviderHolder;
 import org.apache.skywalking.oap.server.library.module.ModuleServiceHolder;
 import org.apache.skywalking.oap.server.telemetry.api.MetricsCreator;
 import org.apache.skywalking.oap.server.telemetry.none.MetricsCreatorNoop;
-import org.junit.Assert;
-import org.junit.Test;
-import org.powermock.reflect.Whitebox;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
+
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
@@ -50,7 +53,7 @@ public class PersistenceTimerTest {
 
     @Test
     public void testExtractDataAndSave() throws Exception {
-        Set<PrepareRequest> result = new HashSet();
+        Set<PrepareRequest> result = new HashSet<>();
         int count = 101;
         int workCount = 10;
         CoreModuleConfig moduleConfig = new CoreModuleConfig();
@@ -81,10 +84,72 @@ public class PersistenceTimerTest {
         PersistenceTimer.INSTANCE.isStarted = true;
 
         PersistenceTimer.INSTANCE.start(moduleManager, moduleConfig);
-        CompletableFuture<Void> f = Whitebox.invokeMethod(PersistenceTimer.INSTANCE, "extractDataAndSave", iBatchDAO);
+        Method method = PersistenceTimer.class.getDeclaredMethod("extractDataAndSave", IBatchDAO.class);
+        method.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        CompletableFuture<Void> f = (CompletableFuture<Void>) method.invoke(PersistenceTimer.INSTANCE, iBatchDAO);
         f.join();
 
-        Assert.assertEquals(count * workCount * 2, result.size());
+        Assertions.assertEquals(count * workCount * 2, result.size());
+    }
+
+    /**
+     * A round completes only when the storage has answered for every request of it, and the storage is told the
+     * round is queued before that wait begins: the persistence session cache is filled by the storage's answer,
+     * and the next round, scheduled from the end of this one, must find it filled.
+     */
+    @Test
+    public void aRoundWaitsForTheStorageToAnswerAfterTellingItTheRoundIsQueued() throws Exception {
+        final CompletableFuture<Void> answer = new CompletableFuture<>();
+        final List<String> order = new CopyOnWriteArrayList<>();
+        final IBatchDAO dao = new IBatchDAO() {
+            @Override
+            public void insert(final InsertRequest insertRequest) {
+            }
+
+            @Override
+            public CompletableFuture<Void> flush(final List<PrepareRequest> prepareRequests) {
+                order.add("flush");
+                return answer;
+            }
+
+            @Override
+            public void endOfFlush() {
+                order.add("endOfFlush");
+            }
+        };
+        final MetricsPersistentWorker worker = genWorkers(0, 1);
+        MetricsStreamProcessor.getInstance().getPersistentWorkers().add(worker);
+        try {
+            ModuleManager moduleManager = mock(ModuleManager.class);
+            ModuleServiceHolder moduleServiceHolder = mock(ModuleServiceHolder.class);
+            doReturn((ModuleProviderHolder) () -> moduleServiceHolder).when(moduleManager).find(anyString());
+            doReturn(new MetricsCreatorNoop()).when(moduleServiceHolder).getService(MetricsCreator.class);
+            doReturn(dao).when(moduleServiceHolder).getService(IBatchDAO.class);
+            CoreModuleConfig moduleConfig = new CoreModuleConfig();
+            moduleConfig.setPersistentPeriod(Integer.MAX_VALUE);
+            PersistenceTimer.INSTANCE.isStarted = true;
+            PersistenceTimer.INSTANCE.start(moduleManager, moduleConfig);
+
+            Method method = PersistenceTimer.class.getDeclaredMethod("extractDataAndSave", IBatchDAO.class);
+            method.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            CompletableFuture<Void> round = (CompletableFuture<Void>) method.invoke(PersistenceTimer.INSTANCE, dao);
+
+            // every request is queued, and the storage told so, while the answer is still to come
+            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (!order.contains("endOfFlush") && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            Assertions.assertTrue(order.contains("flush"), order.toString());
+            Assertions.assertEquals(order.size() - 1, order.indexOf("endOfFlush"), "endOfFlush follows every flush: " + order);
+            Assertions.assertFalse(round.isDone(), "the round ended before the storage answered");
+
+            answer.complete(null);
+            round.get(10, TimeUnit.SECONDS);
+        } finally {
+            MetricsStreamProcessor.getInstance().getPersistentWorkers().remove(worker);
+        }
     }
 
     private MetricsPersistentWorker genWorkers(int num, int count) {
@@ -116,8 +181,8 @@ public class PersistenceTimerTest {
         private final String id;
 
         @Override
-        public String id() {
-            return id;
+        public StorageID id() {
+            return new StorageID().append("ID", id);
         }
 
     }

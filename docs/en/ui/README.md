@@ -1,54 +1,49 @@
-# Introduction to UI
+# UI Customization
 
-The SkyWalking official UI provides the default and powerful visualization capabilities for SkyWalking to observe full-stack applications.
+The OAP backend in this repository ships the **data plane** — receivers,
+analyzers, metric definitions, entity model, query surfaces. It does **not**
+ship dashboards or marketplace visualizations. Those live in
+[apache/skywalking-horizon-ui](https://github.com/apache/skywalking-horizon-ui),
+the official web UI, which releases independently of the OAP backend.
 
-<img src="https://skywalking.apache.org/ui-doc/9.0.0/home.png"/>
+As of 11.0.0 the boot-time `UITemplateInitializer` / `UIMenuInitializer`
+have been removed and OAP no longer seeds any dashboard JSONs or menu
+items on startup. The dashboard library, the sidebar menu, the
+marketplace layout, i18n strings — every layer of *visualization* —
+ships from Horizon UI.
 
-The left side menu lists all available supported stacks with default dashboards.
+## What Horizon UI provides
 
-Follow the `Official Dashboards` menu to explore all default dashboards on their ways to monitor different tech stacks.
+Horizon UI is the official web UI and the visualization layer of
+SkyWalking. It is a separate sub-project with its own release cadence
+and configuration; OAP only persists the dashboards that operators save.
+At a high level Horizon UI covers:
 
-## Custom Dashboard
+* **Setup** — container image, `horizon.yaml`, OAP connection, file
+  layout, debug logging.
+* **Access control** — local / LDAP / break-glass auth backends, RBAC
+  roles and verbs, audit log, admin-page gating.
+* **Customization** — sidebar menu structure, layer dashboard templates,
+  overview templates, adding a new layer.
+* **Components** — overview widgets, dashboard widgets, chart types.
+* **Operate** — cluster status & metadata, inspect.
 
-Besides official dashboards, **Dashboards** provide customization capabilities to end-users to add new tabs/pages/widgets, and
-flexibility to re-config the dashboard on your own preference.
+Each area lives in the
+[Horizon UI documentation](https://skywalking.apache.org/docs/skywalking-horizon-ui/next/readme/).
 
-The dashboard has two key attributes, **Layer** and **Entity Type**. Learn these two concepts first before you begin any
-customization. Also, trace, metrics, and log analysis are relative to OAL, MAL, and LAL engines in the SkyWalking kernel. It would help if you
-learned them first, too.
+## Bundled UI templates
 
-Service and All entity type dashboard could be set as root(`set this to root`), which means this dashboard would be used
-as the entrance of its Layer. If you have multiple root dashboards, UI will choose one randomly (We don't recommend doing
-so).
+The OAP backend does **not** seed dashboard JSONs at boot anymore.
+Horizon UI owns and ships the entire bundled set in its own image: the
+default dashboard configurations for every supported layer, several
+cross-cutting overview and 3D infrastructure-map setups, the sidebar
+menu, and i18n translations. Operators customize these in the UI's admin
+pages; see the
+[Horizon UI documentation](https://skywalking.apache.org/docs/skywalking-horizon-ui/next/readme/).
 
-**Notice, dashboard editable is disabled on release; set system env(**SW_ENABLE_UPDATE_UI_TEMPLATE=true**) to activate
-them.** Before you save the edited dashboard, it is just stored in memory. Closing a tab would **LOSE** the change permanently.
+## Editing dashboards from the UI
 
-There are some calculations for metric values in the dashboard.
-
-|Label|Calculation|
-|----|----|
-|Percentage|Value / 100|
-|Apdex|Value / 10000|
-|Average|Sum of values / Count of values|
-|Percentage + Avg-preview|Sum of values / Count of values / 100|
-|Apdex + Avg-preview|Sum of values / Count of values / 10000|
-|Byte to KB|Value / 1024|
-|Byte to MB|Value / 1024 / 1024|
-|Byte to GB|Value / 1024 / 1024 / 1024|
-|Seconds to YYYY-MM-DD HH:mm:ss|dayjs(value * 1000).format("YYYY-MM-DD HH:mm:ss")|
-|Milliseconds to YYYY-MM-DD HH:mm:ss|dayjs(value).format("YYYY-MM-DD HH:mm:ss")|
-|Precision|Value.toFixed(2)|
-|Milliseconds to seconds|Value / 1000|
-|Seconds to days|Value / 86400|
-
-## Settings
-
-Settings provide language, server time zone, and auto-fresh options. These settings are stored in the browser's local storage. Unless you clear them manually, those will not change. 
-
-## FAQ
-
-### Login and Authentication
-
-SkyWalking doesn't provide login and authentication as usual for years. If you need, a lot of Gateway solutions have
-provides well-established solutions, such as the Nginx ecosystem.
+Horizon UI's dashboard editor drives the admin REST endpoints from the
+browser. The write surface is gated behind the admin host's
+security posture; see the
+[admin-server security notice](../setup/backend/admin-api/readme.md#-security-notice).

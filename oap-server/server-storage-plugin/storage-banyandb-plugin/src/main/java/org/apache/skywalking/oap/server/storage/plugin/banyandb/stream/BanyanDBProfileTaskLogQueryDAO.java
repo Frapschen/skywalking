@@ -19,9 +19,8 @@
 package org.apache.skywalking.oap.server.storage.plugin.banyandb.stream;
 
 import com.google.common.collect.ImmutableSet;
-import org.apache.skywalking.banyandb.v1.client.RowEntity;
-import org.apache.skywalking.banyandb.v1.client.StreamQuery;
-import org.apache.skywalking.banyandb.v1.client.StreamQueryResponse;
+import org.apache.skywalking.library.banyandb.v1.client.Element;
+import org.apache.skywalking.library.banyandb.v1.client.StreamQueryResponse;
 import org.apache.skywalking.oap.server.core.profiling.trace.ProfileTaskLogRecord;
 import org.apache.skywalking.oap.server.core.query.type.ProfileTaskLog;
 import org.apache.skywalking.oap.server.core.query.type.ProfileTaskLogOperationType;
@@ -50,23 +49,19 @@ public class BanyanDBProfileTaskLogQueryDAO extends AbstractBanyanDBDAO implemen
 
     @Override
     public List<ProfileTaskLog> getTaskLogList() throws IOException {
-        StreamQueryResponse resp = query(ProfileTaskLogRecord.INDEX_NAME, TAGS,
-                new QueryBuilder<StreamQuery>() {
-                    @Override
-                    public void apply(StreamQuery query) {
-                        query.setLimit(BanyanDBProfileTaskLogQueryDAO.this.queryMaxSize);
-                    }
-                });
+        StreamQueryResponse resp = queryDebuggable(false, ProfileTaskLogRecord.INDEX_NAME, TAGS,
+                null,
+                Conditions.create().limit(queryMaxSize));
 
         final LinkedList<ProfileTaskLog> tasks = new LinkedList<>();
-        for (final RowEntity rowEntity : resp.getElements()) {
-            tasks.add(buildProfileTaskLog(rowEntity));
+        for (final Element element : resp.getElements()) {
+            tasks.add(buildProfileTaskLog(element));
         }
 
         return tasks;
     }
 
-    private ProfileTaskLog buildProfileTaskLog(RowEntity data) {
+    private ProfileTaskLog buildProfileTaskLog(Element data) {
         return ProfileTaskLog.builder()
                 .id(data.getId())
                 .taskId(data.getTagValue(ProfileTaskLogRecord.TASK_ID))

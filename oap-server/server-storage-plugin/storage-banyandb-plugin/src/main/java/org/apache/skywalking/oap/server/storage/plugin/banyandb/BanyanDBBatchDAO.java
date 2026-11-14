@@ -18,26 +18,31 @@
 
 package org.apache.skywalking.oap.server.storage.plugin.banyandb;
 
-import org.apache.skywalking.banyandb.v1.client.MeasureBulkWriteProcessor;
-import org.apache.skywalking.banyandb.v1.client.StreamBulkWriteProcessor;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 import org.apache.skywalking.oap.server.core.storage.AbstractDAO;
 import org.apache.skywalking.oap.server.core.storage.IBatchDAO;
 import org.apache.skywalking.oap.server.library.client.request.InsertRequest;
 import org.apache.skywalking.oap.server.library.client.request.PrepareRequest;
 import org.apache.skywalking.oap.server.library.util.CollectionUtils;
+import org.apache.skywalking.oap.server.storage.plugin.banyandb.bulk.MeasureBulkWriteProcessor;
+import org.apache.skywalking.oap.server.storage.plugin.banyandb.bulk.StreamBulkWriteProcessor;
+import org.apache.skywalking.oap.server.storage.plugin.banyandb.bulk.TraceBulkWriteProcessor;
 import org.apache.skywalking.oap.server.storage.plugin.banyandb.measure.BanyanDBMeasureInsertRequest;
 import org.apache.skywalking.oap.server.storage.plugin.banyandb.measure.BanyanDBMeasureUpdateRequest;
 import org.apache.skywalking.oap.server.storage.plugin.banyandb.stream.BanyanDBStreamInsertRequest;
-
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
+import org.apache.skywalking.oap.server.storage.plugin.banyandb.trace.BanyanDBTraceInsertRequest;
 
 public class BanyanDBBatchDAO extends AbstractDAO<BanyanDBStorageClient> implements IBatchDAO {
     private static final Object STREAM_SYNCHRONIZER = new Object();
     private static final Object MEASURE_SYNCHRONIZER = new Object();
+    private static final Object TRACE_SYNCHRONIZER = new Object();
     private StreamBulkWriteProcessor streamBulkWriteProcessor;
 
     private MeasureBulkWriteProcessor measureBulkWriteProcessor;
+
+    private TraceBulkWriteProcessor traceBulkWriteProcessor;
 
     private final int maxBulkSize;
 
@@ -58,25 +63,48 @@ public class BanyanDBBatchDAO extends AbstractDAO<BanyanDBStorageClient> impleme
             getStreamBulkWriteProcessor().add(((BanyanDBStreamInsertRequest) insertRequest).getStreamWrite());
         } else if (insertRequest instanceof BanyanDBMeasureInsertRequest) {
             getMeasureBulkWriteProcessor().add(((BanyanDBMeasureInsertRequest) insertRequest).getMeasureWrite());
+        } else  if (insertRequest instanceof BanyanDBTraceInsertRequest) {
+            getTraceBulkWriteProcessor().add(((BanyanDBTraceInsertRequest) insertRequest).getTraceWrite());
         }
     }
 
     @Override
     public CompletableFuture<Void> flush(List<PrepareRequest> prepareRequests) {
         if (CollectionUtils.isNotEmpty(prepareRequests)) {
-            for (final PrepareRequest r : prepareRequests) {
+            return CompletableFuture.allOf(prepareRequests.stream().map((Function<PrepareRequest, CompletableFuture<Void>>) r -> {
                 if (r instanceof BanyanDBStreamInsertRequest) {
-                    // TODO: return CompletableFuture<Void>
-                    getStreamBulkWriteProcessor().add(((BanyanDBStreamInsertRequest) r).getStreamWrite());
+                    return getStreamBulkWriteProcessor().add(((BanyanDBStreamInsertRequest) r).getStreamWrite());
                 } else if (r instanceof BanyanDBMeasureInsertRequest) {
-                    getMeasureBulkWriteProcessor().add(((BanyanDBMeasureInsertRequest) r).getMeasureWrite());
+                    return getMeasureBulkWriteProcessor().add(((BanyanDBMeasureInsertRequest) r).getMeasureWrite())
+                                                         .whenComplete((v, throwable) -> {
+                                                             if (throwable == null) {
+                                                                 // Insert completed
+                                                                 ((BanyanDBMeasureInsertRequest) r).onInsertCompleted();
+                                                             }
+                                                         });
                 } else if (r instanceof BanyanDBMeasureUpdateRequest) {
-                    getMeasureBulkWriteProcessor().add(((BanyanDBMeasureUpdateRequest) r).getMeasureWrite());
+                    return getMeasureBulkWriteProcessor().add(((BanyanDBMeasureUpdateRequest) r).getMeasureWrite());
+                } else  if (r instanceof BanyanDBTraceInsertRequest) {
+                    return getTraceBulkWriteProcessor().add(((BanyanDBTraceInsertRequest) r).getTraceWrite());
                 }
-            }
+                return CompletableFuture.completedFuture(null);
+            }).toArray(CompletableFuture[]::new));
         }
 
         return CompletableFuture.completedFuture(null);
+    }
+
+    /**
+     * The persistence timer has queued its round's measures: send them now. Left to the bulk's own schedule they
+     * wait up to flushInterval, longer than the timer's own wait for their acknowledgement, and the round would
+     * end before the session cache is filled. Streams and traces are not written by the timer and keep their
+     * schedule. The flush returns when BanyanDB has answered.
+     */
+    @Override
+    public void endOfFlush() {
+        if (measureBulkWriteProcessor != null) {
+            measureBulkWriteProcessor.flush();
+        }
     }
 
     private StreamBulkWriteProcessor getStreamBulkWriteProcessor() {
@@ -99,5 +127,16 @@ public class BanyanDBBatchDAO extends AbstractDAO<BanyanDBStorageClient> impleme
             }
         }
         return measureBulkWriteProcessor;
+    }
+
+    private TraceBulkWriteProcessor getTraceBulkWriteProcessor() {
+        if (traceBulkWriteProcessor == null) {
+            synchronized (TRACE_SYNCHRONIZER) {
+                if (traceBulkWriteProcessor == null) {
+                    this.traceBulkWriteProcessor = getClient().createTraceBulkProcessor(maxBulkSize, flushInterval, concurrency);
+                }
+            }
+        }
+        return traceBulkWriteProcessor;
     }
 }

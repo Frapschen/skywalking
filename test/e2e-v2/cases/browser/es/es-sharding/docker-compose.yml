@@ -13,11 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version: '2.1'
-
 services:
   es:
-    image: elastic/elasticsearch:7.15.0
+    image: elastic/elasticsearch:8.18.8
     expose:
       - 9200
     networks:
@@ -50,7 +48,7 @@ services:
       context: ./../../
       dockerfile: docker/Dockerfile.provider
       args:
-        - SW_AGENT_PYTHON_COMMIT=c8479000eb729cc86509222fd48b942edcaaca74
+        - SW_AGENT_PYTHON_COMMIT=${SW_AGENT_PYTHON_COMMIT}
     command: [ 'python3', '/entrypoint.py' ]
     networks:
       - e2e
@@ -59,6 +57,7 @@ services:
     environment:
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
       SW_AGENT_LOGGING_LEVEL: DEBUG
+      SW_AGENT_NAME: provider-py
     volumes:
       - ./../../docker/provider.py:/entrypoint.py
     depends_on:

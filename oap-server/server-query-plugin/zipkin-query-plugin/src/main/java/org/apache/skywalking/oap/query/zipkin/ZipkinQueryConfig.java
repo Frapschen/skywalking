@@ -28,9 +28,15 @@ public class ZipkinQueryConfig extends ModuleConfig {
     private String restHost;
     private int restPort;
     private String restContextPath;
-    private int restMaxThreads = 200;
     private long restIdleTimeOut = 30000;
     private int restAcceptQueueSize = 0;
+    /**
+     * TLS settings for this HTTP server. The certificate and key are read from disk and
+     * reloaded on rotation without a restart. Server-side TLS only (no mTLS).
+     */
+    private boolean restSSLEnabled = false;
+    private String restSSLKeyPath;
+    private String restSSLCertChainPath;
     private long lookback = 86400000L;
     private int namesMaxAge = 300;
     private int uiQueryLimit = 10;

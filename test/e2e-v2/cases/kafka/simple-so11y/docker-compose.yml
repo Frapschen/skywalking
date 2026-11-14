@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version: '2.1'
-
 services:
   zookeeper:
     image: zookeeper:3.4
@@ -32,7 +30,7 @@ services:
       retries: 120
 
   broker-a:
-    image: bitnami/kafka:2.4.1
+    image: bitnamilegacy/kafka:2.4.1
     hostname: broker-a
     expose:
       - 9092
@@ -52,7 +50,7 @@ services:
       retries: 120
 
   broker-b:
-    image: bitnami/kafka:2.4.1
+    image: bitnamilegacy/kafka:2.4.1
     hostname: broker-b
     expose:
       - 9092
@@ -90,6 +88,13 @@ services:
     ports:
     - 12800
 
+  banyandb:
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: banyandb
+    ports:
+      - 17912
+
   provider:
     build:
       context: ../../../
@@ -108,6 +113,7 @@ services:
       SW_AGENT_NAME: e2e-service-provider
       SW_AGENT_INSTANCE_NAME: provider1
       SW_LOGGING_OUTPUT: CONSOLE
+      SW_METER_ACTIVE: 'false'
     healthcheck:
       test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9090"]
       interval: 5s
@@ -127,6 +133,7 @@ services:
       service: consumer
     environment:
       PROVIDER_URL: http://provider:9090
+      SW_METER_ACTIVE: 'false'
     ports:
       - 9092
     depends_on:

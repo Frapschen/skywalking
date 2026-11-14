@@ -19,7 +19,7 @@
 package org.apache.skywalking.oap.server.analyzer.agent.kafka.provider;
 
 import lombok.extern.slf4j.Slf4j;
-import org.apache.skywalking.oap.log.analyzer.module.LogAnalyzerModule;
+import org.apache.skywalking.oap.log.analyzer.v2.module.LogAnalyzerModule;
 import org.apache.skywalking.oap.server.analyzer.agent.kafka.KafkaFetcherHandlerRegister;
 import org.apache.skywalking.oap.server.analyzer.agent.kafka.module.KafkaFetcherConfig;
 import org.apache.skywalking.oap.server.analyzer.agent.kafka.module.KafkaFetcherModule;
@@ -32,21 +32,17 @@ import org.apache.skywalking.oap.server.analyzer.agent.kafka.provider.handler.Se
 import org.apache.skywalking.oap.server.analyzer.agent.kafka.provider.handler.TraceSegmentHandler;
 import org.apache.skywalking.oap.server.analyzer.module.AnalyzerModule;
 import org.apache.skywalking.oap.server.core.CoreModule;
-import org.apache.skywalking.oap.server.library.module.ModuleConfig;
 import org.apache.skywalking.oap.server.library.module.ModuleDefine;
 import org.apache.skywalking.oap.server.library.module.ModuleProvider;
 import org.apache.skywalking.oap.server.library.module.ModuleStartException;
 import org.apache.skywalking.oap.server.library.module.ServiceNotProvidedException;
 import org.apache.skywalking.oap.server.telemetry.TelemetryModule;
+import org.apache.skywalking.oap.trace.analyzer.v2.module.TraceAnalyzerModule;
 
 @Slf4j
 public class KafkaFetcherProvider extends ModuleProvider {
     private KafkaFetcherHandlerRegister handlerRegister;
-    private final KafkaFetcherConfig config;
-
-    public KafkaFetcherProvider() {
-        config = new KafkaFetcherConfig();
-    }
+    private KafkaFetcherConfig config;
 
     @Override
     public String name() {
@@ -59,8 +55,18 @@ public class KafkaFetcherProvider extends ModuleProvider {
     }
 
     @Override
-    public ModuleConfig createConfigBeanIfAbsent() {
-        return config;
+    public ConfigCreator newConfigCreator() {
+        return new ConfigCreator<KafkaFetcherConfig>() {
+            @Override
+            public Class type() {
+                return KafkaFetcherConfig.class;
+            }
+
+            @Override
+            public void onInitialized(final KafkaFetcherConfig initialized) {
+                config = initialized;
+            }
+        };
     }
 
     @Override
@@ -95,6 +101,7 @@ public class KafkaFetcherProvider extends ModuleProvider {
         return new String[] {
             TelemetryModule.NAME,
             AnalyzerModule.NAME,
+            TraceAnalyzerModule.NAME,
             LogAnalyzerModule.NAME,
             CoreModule.NAME
         };

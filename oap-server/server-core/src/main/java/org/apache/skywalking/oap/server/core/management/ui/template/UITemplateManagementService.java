@@ -45,7 +45,7 @@ public class UITemplateManagementService implements Service {
 
     public DashboardConfiguration getTemplate(String id) throws IOException {
         DashboardConfiguration configuration = getUITemplateManagementDAO().getTemplate(id);
-        if (configuration.isDisabled()) {
+        if (configuration == null || configuration.isDisabled()) {
             return null;
         }
         return configuration;
@@ -73,6 +73,21 @@ public class UITemplateManagementService implements Service {
         DashboardConfiguration configuration = getUITemplateManagementDAO().getTemplate(setting.getId());
         if (configuration == null) {
             getUITemplateManagementDAO().addTemplate(setting);
+        }
+    }
+
+    /**
+     * Add or replace: if a template with the same id already exists, overwrite it;
+     * otherwise create a new one. Used by the initializer when
+     * {@code SW_UI_TEMPLATE_FORCE_RELOAD=true} so that edits to shipped templates
+     * take effect without wiping the storage container.
+     */
+    public void addOrReplace(DashboardSetting setting) throws IOException {
+        DashboardConfiguration configuration = getUITemplateManagementDAO().getTemplate(setting.getId());
+        if (configuration == null) {
+            getUITemplateManagementDAO().addTemplate(setting);
+        } else {
+            getUITemplateManagementDAO().changeTemplate(setting);
         }
     }
 }

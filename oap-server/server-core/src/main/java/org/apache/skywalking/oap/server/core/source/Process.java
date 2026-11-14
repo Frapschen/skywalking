@@ -28,8 +28,9 @@ import org.apache.skywalking.oap.server.core.query.enumeration.ProfilingSupportS
 import java.util.List;
 
 import static org.apache.skywalking.oap.server.core.source.DefaultScopeDefine.PROCESS;
+import static org.apache.skywalking.oap.server.core.source.DefaultScopeDefine.PROCESS_CATALOG_NAME;
 
-@ScopeDeclaration(id = PROCESS, name = "Process")
+@ScopeDeclaration(id = PROCESS, name = "Process", catalog = PROCESS_CATALOG_NAME)
 @ScopeDefaultColumn.VirtualColumnDefinition(fieldName = "entityId", columnName = "entity_id", isID = true, type = String.class)
 public class Process extends Source {
     private volatile String entityId;
@@ -83,5 +84,23 @@ public class Process extends Source {
     public void prepare() {
         serviceId = IDManager.ServiceID.buildId(serviceName, isServiceNormal);
         instanceId = IDManager.ServiceInstanceID.buildId(serviceId, instanceName);
+    }
+
+    @Override
+    public String toJson() {
+        final JsonObject obj = new JsonObject();
+        obj.addProperty("scope", scope());
+        obj.addProperty("entityId", getEntityId());
+        obj.addProperty("timeBucket", getTimeBucket());
+        obj.addProperty("instanceId", instanceId);
+        obj.addProperty("serviceId", serviceId);
+        obj.addProperty("name", name);
+        obj.addProperty("serviceName", serviceName);
+        obj.addProperty("instanceName", instanceName);
+        obj.addProperty("serviceNormal", isServiceNormal);
+        obj.addProperty("agentId", agentId);
+        obj.addProperty("detectType", detectType == null ? null : detectType.name());
+        obj.addProperty("profilingSupportStatus", profilingSupportStatus == null ? null : profilingSupportStatus.name());
+        return obj.toString();
     }
 }

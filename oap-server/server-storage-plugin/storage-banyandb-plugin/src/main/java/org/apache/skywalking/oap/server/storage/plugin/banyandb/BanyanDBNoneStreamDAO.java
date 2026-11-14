@@ -19,8 +19,7 @@
 package org.apache.skywalking.oap.server.storage.plugin.banyandb;
 
 import lombok.extern.slf4j.Slf4j;
-import org.apache.skywalking.banyandb.v1.client.StreamWrite;
-import org.apache.skywalking.oap.server.core.analysis.TimeBucket;
+import org.apache.skywalking.library.banyandb.v1.client.StreamWrite;
 import org.apache.skywalking.oap.server.core.analysis.config.NoneStream;
 import org.apache.skywalking.oap.server.core.storage.AbstractDAO;
 import org.apache.skywalking.oap.server.core.storage.INoneStreamDAO;
@@ -41,14 +40,21 @@ public class BanyanDBNoneStreamDAO extends AbstractDAO<BanyanDBStorageClient> im
 
     @Override
     public void insert(Model model, NoneStream noneStream) throws IOException {
-        MetadataRegistry.Schema schema = MetadataRegistry.INSTANCE.findMetadata(model.getName());
+        // Self-heal a missing local schema entry once (RPC-free re-derivation) before failing —
+        // see MetadataRegistry.repopulateLocally. Re-read via the same lookup; throw only if still absent.
+        MetadataRegistry.Schema schema = MetadataRegistry.INSTANCE.findRecordMetadata(model.getName());
+        if (schema == null) {
+            MetadataRegistry.INSTANCE.repopulateLocally(model);
+            schema = MetadataRegistry.INSTANCE.findRecordMetadata(model.getName());
+        }
         if (schema == null) {
             throw new IOException(model.getName() + " is not registered");
         }
-        StreamWrite streamWrite = new StreamWrite(schema.getMetadata().getGroup(), // group name
-                model.getName(), // index-name
-                noneStream.id(), // identity
-                TimeBucket.getTimestamp(noneStream.getTimeBucket(), model.getDownsampling())); // timestamp
+        StreamWrite streamWrite = getClient().createStreamWrite(
+            schema.getMetadata().getGroup(), // group name
+            schema.getMetadata().name(), // stream-name
+            noneStream.id().build() // identity
+        ); // set timestamp inside `BanyanDBConverter.StreamToStorage`
         Convert2Storage<StreamWrite> convert2Storage = new BanyanDBConverter.StreamToStorage(schema, streamWrite);
         storageBuilder.entity2Storage(noneStream, convert2Storage);
         getClient().write(streamWrite);

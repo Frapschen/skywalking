@@ -19,29 +19,51 @@
 package org.apache.skywalking.oap.server.core.zipkin;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import java.util.List;
+import com.google.protobuf.ByteString;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.skywalking.oap.server.core.Const;
 import org.apache.skywalking.oap.server.core.analysis.Stream;
+import org.apache.skywalking.oap.server.core.storage.model.BanyanDBTrace;
 import org.apache.skywalking.oap.server.core.analysis.record.Record;
 import org.apache.skywalking.oap.server.core.analysis.worker.RecordStreamProcessor;
 import org.apache.skywalking.oap.server.core.source.DefaultScopeDefine;
+import org.apache.skywalking.oap.server.core.storage.StorageID;
 import org.apache.skywalking.oap.server.core.storage.annotation.BanyanDB;
 import org.apache.skywalking.oap.server.core.storage.annotation.Column;
+import org.apache.skywalking.oap.server.core.storage.annotation.ElasticSearch;
 import org.apache.skywalking.oap.server.core.storage.annotation.SQLDatabase;
 import org.apache.skywalking.oap.server.core.storage.annotation.SuperDataset;
+import org.apache.skywalking.oap.server.core.storage.query.proto.Source;
+import org.apache.skywalking.oap.server.core.storage.query.proto.SpanWrapper;
 import org.apache.skywalking.oap.server.core.storage.type.Convert2Entity;
 import org.apache.skywalking.oap.server.core.storage.type.Convert2Storage;
 import org.apache.skywalking.oap.server.core.storage.type.StorageBuilder;
-import org.apache.skywalking.oap.server.library.util.BooleanUtils;
 import org.apache.skywalking.oap.server.library.util.StringUtil;
+import zipkin2.Endpoint;
+import zipkin2.Span;
+
+import java.util.List;
+import java.util.Map;
+import zipkin2.codec.SpanBytesEncoder;
+
+import static org.apache.skywalking.oap.server.core.storage.StorageData.TIME_BUCKET;
 
 @SuperDataset
 @Stream(name = ZipkinSpanRecord.INDEX_NAME, scopeId = DefaultScopeDefine.ZIPKIN_SPAN, builder = ZipkinSpanRecord.Builder.class, processor = RecordStreamProcessor.class)
-public class ZipkinSpanRecord extends Record {
+@SQLDatabase.ExtraColumn4AdditionalEntity(additionalTable = ZipkinSpanRecord.ADDITIONAL_QUERY_TABLE, parentColumn = TIME_BUCKET)
+@BanyanDB.TimestampColumn(ZipkinSpanRecord.TIMESTAMP_MILLIS)
+@BanyanDB.Trace.TraceIdColumn(ZipkinSpanRecord.TRACE_ID)
+@BanyanDB.Trace.SpanIdColumn(ZipkinSpanRecord.SPAN_ID)
+@BanyanDB.Trace.IndexRule(name = ZipkinSpanRecord.TIMESTAMP_MILLIS, columns = {
+    ZipkinSpanRecord.LOCAL_ENDPOINT_SERVICE_NAME,
+}, orderByColumn = ZipkinSpanRecord.TIMESTAMP_MILLIS)
+@BanyanDB.Group(traceGroup = BanyanDB.TraceGroup.ZIPKIN_TRACE)
+public class ZipkinSpanRecord extends Record implements BanyanDBTrace {
     private static final Gson GSON = new Gson();
+    public static final int QUERY_LENGTH = 256;
     public static final String INDEX_NAME = "zipkin_span";
     public static final String ADDITIONAL_QUERY_TABLE = "zipkin_query";
     public static final String TRACE_ID = "trace_id";
@@ -68,94 +90,107 @@ public class ZipkinSpanRecord extends Record {
 
     @Setter
     @Getter
-    @Column(columnName = TRACE_ID)
+    @Column(name = TRACE_ID)
+    @SQLDatabase.AdditionalEntity(additionalTables = {ADDITIONAL_QUERY_TABLE}, reserveOriginalColumns = true)
+    @ElasticSearch.Routing
+    @ElasticSearch.EnableDocValues
     private String traceId;
     @Setter
     @Getter
-    @Column(columnName = SPAN_ID)
+    @Column(name = SPAN_ID)
     private String spanId;
     @Setter
     @Getter
-    @Column(columnName = PARENT_ID)
+    @Column(name = PARENT_ID)
     private String parentId;
     @Setter
     @Getter
-    @Column(columnName = NAME)
+    @Column(name = NAME)
     private String name;
     @Setter
     @Getter
-    @Column(columnName = DURATION)
+    @Column(name = DURATION)
     private long duration;
     @Setter
     @Getter
-    @Column(columnName = KIND)
+    @Column(name = KIND)
     private String kind;
     @Setter
     @Getter
-    @Column(columnName = TIMESTAMP_MILLIS)
+    @ElasticSearch.EnableDocValues
+    @Column(name = TIMESTAMP_MILLIS)
     private long timestampMillis;
     @Setter
     @Getter
-    @Column(columnName = TIMESTAMP)
+    @Column(name = TIMESTAMP)
+    @BanyanDB.NoIndexing
     private long timestamp;
     @Setter
     @Getter
-    @Column(columnName = LOCAL_ENDPOINT_SERVICE_NAME)
-    @BanyanDB.ShardingKey(index = 0)
+    @Column(name = LOCAL_ENDPOINT_SERVICE_NAME)
     private String localEndpointServiceName;
     @Setter
     @Getter
-    @Column(columnName = LOCAL_ENDPOINT_IPV4, storageOnly = true)
+    @Column(name = LOCAL_ENDPOINT_IPV4, storageOnly = true)
     private String localEndpointIPV4;
     @Setter
     @Getter
-    @Column(columnName = LOCAL_ENDPOINT_IPV6, storageOnly = true)
+    @Column(name = LOCAL_ENDPOINT_IPV6, storageOnly = true)
     private String localEndpointIPV6;
     @Setter
     @Getter
-    @Column(columnName = LOCAL_ENDPOINT_PORT, storageOnly = true)
+    @Column(name = LOCAL_ENDPOINT_PORT, storageOnly = true)
     private int localEndpointPort;
     @Setter
     @Getter
-    @Column(columnName = REMOTE_ENDPOINT_SERVICE_NAME)
+    @Column(name = REMOTE_ENDPOINT_SERVICE_NAME)
     private String remoteEndpointServiceName;
     @Setter
     @Getter
-    @Column(columnName = REMOTE_ENDPOINT_IPV4, storageOnly = true)
+    @Column(name = REMOTE_ENDPOINT_IPV4, storageOnly = true)
     private String remoteEndpointIPV4;
     @Setter
     @Getter
-    @Column(columnName = REMOTE_ENDPOINT_IPV6, storageOnly = true)
+    @Column(name = REMOTE_ENDPOINT_IPV6, storageOnly = true)
     private String remoteEndpointIPV6;
     @Setter
     @Getter
-    @Column(columnName = REMOTE_ENDPOINT_PORT, storageOnly = true)
+    @Column(name = REMOTE_ENDPOINT_PORT, storageOnly = true)
     private int remoteEndpointPort;
     @Setter
     @Getter
-    @Column(columnName = ANNOTATIONS, storageOnly = true, length = 50000)
+    @Column(name = ANNOTATIONS, storageOnly = true, length = 50000)
     private JsonObject annotations;
     @Setter
     @Getter
-    @Column(columnName = TAGS, storageOnly = true, length = 50000)
+    @Column(name = TAGS, storageOnly = true, length = 50000)
     private JsonObject tags;
     @Setter
     @Getter
-    @Column(columnName = DEBUG)
+    @Column(name = DEBUG)
     private int debug;
     @Setter
     @Getter
-    @Column(columnName = SHARED)
+    @Column(name = SHARED)
     private int shared;
     @Setter
     @Getter
-    @Column(columnName = QUERY, indexOnly = true)
+    @Column(name = QUERY, indexOnly = true, length = QUERY_LENGTH)
     @SQLDatabase.AdditionalEntity(additionalTables = {ADDITIONAL_QUERY_TABLE})
     private List<String> query;
 
     @Override
-    public String id() {
-        return spanId + Const.LINE + kind;
+    public StorageID id() {
+        return new StorageID().append(TRACE_ID, traceId).append(SPAN_ID, spanId);
+    }
+
+    @Override
+    public SpanWrapper getSpanWrapper() {
+        Span span = buildSpanFromRecord(this);
+        SpanWrapper.Builder builder = SpanWrapper.newBuilder();
+        builder.setSpan(ByteString.copyFrom(SpanBytesEncoder.PROTO3.encode(span)));
+        builder.setSource(Source.ZIPKIN);
+        return builder.build();
     }
 
     public static class Builder implements StorageBuilder<ZipkinSpanRecord> {
@@ -208,19 +243,16 @@ public class ZipkinSpanRecord extends Record {
             converter.accept(KIND, storageData.getKind());
             converter.accept(TIMESTAMP, storageData.getTimestamp());
             converter.accept(TIMESTAMP_MILLIS, storageData.getTimestampMillis());
+            converter.accept(TIME_BUCKET, storageData.getTimeBucket());
             converter.accept(DURATION, storageData.getDuration());
             converter.accept(LOCAL_ENDPOINT_SERVICE_NAME, storageData.getLocalEndpointServiceName());
             converter.accept(LOCAL_ENDPOINT_IPV4, storageData.getLocalEndpointIPV4());
             converter.accept(LOCAL_ENDPOINT_IPV6, storageData.getLocalEndpointIPV6());
-            if (storageData.getLocalEndpointPort() != 0) {
-                converter.accept(LOCAL_ENDPOINT_PORT, storageData.getLocalEndpointPort());
-            }
+            converter.accept(LOCAL_ENDPOINT_PORT, storageData.getLocalEndpointPort());
             converter.accept(REMOTE_ENDPOINT_SERVICE_NAME, storageData.getRemoteEndpointServiceName());
             converter.accept(REMOTE_ENDPOINT_IPV4, storageData.getRemoteEndpointIPV4());
             converter.accept(REMOTE_ENDPOINT_IPV6, storageData.getRemoteEndpointIPV6());
-            if (storageData.getRemoteEndpointPort() != 0) {
-                converter.accept(REMOTE_ENDPOINT_PORT, storageData.getRemoteEndpointPort());
-            }
+            converter.accept(REMOTE_ENDPOINT_PORT, storageData.getRemoteEndpointPort());
             if (storageData.getAnnotations() != null) {
                 converter.accept(ANNOTATIONS, GSON.toJson(storageData.getAnnotations()));
             } else {
@@ -232,12 +264,59 @@ public class ZipkinSpanRecord extends Record {
                 converter.accept(TAGS, Const.EMPTY_STRING);
             }
             converter.accept(QUERY, storageData.getQuery());
-            if (storageData.getDebug() == BooleanUtils.booleanToValue(true)) {
-                converter.accept(DEBUG, storageData.getDebug());
-            }
-            if (storageData.getShared() == BooleanUtils.booleanToValue(true)) {
-                converter.accept(SHARED, storageData.getShared());
+            converter.accept(DEBUG, storageData.getDebug());
+            converter.accept(SHARED, storageData.getShared());
+        }
+    }
+
+    public static Span buildSpanFromRecord(ZipkinSpanRecord record) {
+        Span.Builder span = Span.newBuilder();
+        span.traceId(record.getTraceId());
+        span.id(record.getSpanId());
+        span.parentId(record.getParentId());
+        if (!StringUtil.isEmpty(record.getKind())) {
+            span.kind(Span.Kind.valueOf(record.getKind()));
+        }
+        span.timestamp(record.getTimestamp());
+        span.duration(record.getDuration());
+        span.name(record.getName());
+        //Build localEndpoint
+        Endpoint.Builder localEndpoint = Endpoint.newBuilder();
+        localEndpoint.serviceName(record.getLocalEndpointServiceName());
+        if (!StringUtil.isEmpty(record.getLocalEndpointIPV4())) {
+            localEndpoint.parseIp(record.getLocalEndpointIPV4());
+        } else {
+            localEndpoint.parseIp(record.getLocalEndpointIPV6());
+        }
+        localEndpoint.port(record.getLocalEndpointPort());
+        span.localEndpoint(localEndpoint.build());
+        //Build remoteEndpoint
+        Endpoint.Builder remoteEndpoint = Endpoint.newBuilder();
+        remoteEndpoint.serviceName(record.getRemoteEndpointServiceName());
+        if (!StringUtil.isEmpty(record.getRemoteEndpointIPV4())) {
+            remoteEndpoint.parseIp(record.getRemoteEndpointIPV4());
+        } else {
+            remoteEndpoint.parseIp(record.getRemoteEndpointIPV6());
+        }
+        remoteEndpoint.port(record.getRemoteEndpointPort());
+        span.remoteEndpoint(remoteEndpoint.build());
+
+        //Build tags
+        JsonObject tagsJson = record.getTags();
+        if (tagsJson != null) {
+            for (Map.Entry<String, JsonElement> tag : tagsJson.entrySet()) {
+                span.putTag(tag.getKey(), tag.getValue().getAsString());
             }
         }
+        //Build annotation
+        JsonObject annotationJson = record.getAnnotations();
+        if (annotationJson != null) {
+            for (Map.Entry<String, JsonElement> annotation : annotationJson.entrySet()) {
+                span.addAnnotation(Long.parseLong(annotation.getKey()), annotation.getValue().getAsString());
+            }
+        }
+        span.debug(record.getDebug() != 0);
+        span.shared(record.getShared() != 0);
+        return span.build();
     }
 }

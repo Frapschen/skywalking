@@ -18,6 +18,7 @@
 
 package org.apache.skywalking.oap.server.core.analysis.metrics;
 
+import com.google.gson.JsonObject;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.skywalking.oap.server.core.analysis.ConfigurationDictionary;
@@ -25,7 +26,7 @@ import org.apache.skywalking.oap.server.core.analysis.metrics.annotation.Arg;
 import org.apache.skywalking.oap.server.core.analysis.metrics.annotation.Entrance;
 import org.apache.skywalking.oap.server.core.analysis.metrics.annotation.MetricsFunction;
 import org.apache.skywalking.oap.server.core.analysis.metrics.annotation.SourceFrom;
-import org.apache.skywalking.oap.server.core.query.sql.Function;
+import org.apache.skywalking.oap.server.core.storage.annotation.BanyanDB;
 import org.apache.skywalking.oap.server.core.storage.annotation.Column;
 import org.apache.skywalking.oap.server.core.storage.annotation.ElasticSearch;
 
@@ -45,24 +46,29 @@ public abstract class ApdexMetrics extends Metrics implements IntValueHolder {
     protected static final String S_NUM = "s_num";
     // Level: tolerated
     protected static final String T_NUM = "t_num";
-    protected static final String VALUE = "value";
+    protected static final String VALUE = "int_value";
 
     @Getter
     @Setter
-    @Column(columnName = TOTAL_NUM, storageOnly = true)
+    @Column(name = TOTAL_NUM, storageOnly = true)
+    @BanyanDB.MeasureField
     private long totalNum;
     @Getter
     @Setter
-    @Column(columnName = S_NUM, storageOnly = true)
+    @Column(name = S_NUM, storageOnly = true)
+    @BanyanDB.MeasureField
     private long sNum;
     @Getter
     @Setter
-    @Column(columnName = T_NUM, storageOnly = true)
+    @Column(name = T_NUM, storageOnly = true)
+    @BanyanDB.MeasureField
     private long tNum;
     @Getter
     @Setter
-    @Column(columnName = VALUE, dataType = Column.ValueDataType.COMMON_VALUE, function = Function.Avg)
-    @ElasticSearch.Column(columnAlias = "int_value")
+    @ElasticSearch.EnableDocValues
+    @Column(name = VALUE, dataType = Column.ValueDataType.COMMON_VALUE)
+    @ElasticSearch.Column(legacyName = "value")
+    @BanyanDB.MeasureField
     private int value;
 
     @Entrance
@@ -96,5 +102,13 @@ public abstract class ApdexMetrics extends Metrics implements IntValueHolder {
     @Override
     public int getValue() {
         return value;
+    }
+
+    @Override
+    protected void appendDebugFields(final JsonObject obj) {
+        obj.addProperty("totalNum", totalNum);
+        obj.addProperty("sNum", sNum);
+        obj.addProperty("tNum", tNum);
+        obj.addProperty("value", value);
     }
 }

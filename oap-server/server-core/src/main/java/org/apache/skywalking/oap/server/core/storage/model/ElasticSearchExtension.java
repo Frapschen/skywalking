@@ -36,7 +36,13 @@ public class ElasticSearchExtension {
      */
     private final ElasticSearch.MatchQuery.AnalyzerType analyzer;
 
-    private final String columnAlias;
+    private final String legacyColumnName;
+
+    private final boolean isKeyword;
+
+    private final boolean isRouting;
+
+    private final boolean isDocValuesEnabled;
 
     public boolean needMatchQuery() {
         return analyzer != null;

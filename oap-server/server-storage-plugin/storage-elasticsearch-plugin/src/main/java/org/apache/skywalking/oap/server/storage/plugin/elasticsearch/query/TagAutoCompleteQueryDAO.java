@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import org.apache.skywalking.library.elasticsearch.requests.search.BoolQueryBuilder;
 import org.apache.skywalking.library.elasticsearch.requests.search.Query;
@@ -32,13 +33,15 @@ import org.apache.skywalking.library.elasticsearch.response.search.SearchHit;
 import org.apache.skywalking.library.elasticsearch.response.search.SearchResponse;
 import org.apache.skywalking.oap.server.core.analysis.manual.searchtag.TagAutocompleteData;
 import org.apache.skywalking.oap.server.core.analysis.manual.searchtag.TagType;
+import org.apache.skywalking.oap.server.core.query.input.Duration;
 import org.apache.skywalking.oap.server.core.storage.query.ITagAutoCompleteQueryDAO;
 import org.apache.skywalking.oap.server.library.client.elasticsearch.ElasticSearchClient;
 import org.apache.skywalking.oap.server.library.util.StringUtil;
 import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.ElasticSearchConverter;
 import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.EsDAO;
 import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.IndexController;
-import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.TimeRangeIndexNameGenerator;
+import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.IndexFamily;
+import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.IndexNames;
 
 public class TagAutoCompleteQueryDAO extends EsDAO implements ITagAutoCompleteQueryDAO {
     public TagAutoCompleteQueryDAO(ElasticSearchClient client) {
@@ -48,11 +51,12 @@ public class TagAutoCompleteQueryDAO extends EsDAO implements ITagAutoCompleteQu
     @Override
     public Set<String> queryTagAutocompleteKeys(final TagType tagType,
                                                 final int limit,
-                                                final long startSecondTB,
-                                                final long endSecondTB) throws IOException {
+                                                final Duration duration) throws IOException {
+        // Tags combine records by day and es rolling index by day, need search the whole day
+        // just use the time to locate the physical indexes and ignore time conditions.
         BoolQueryBuilder query = Query.bool();
         query.must(Query.term(TagAutocompleteData.TAG_TYPE, tagType.name()));
-        if (IndexController.LogicIndicesRegister.isPhysicalTable(TagAutocompleteData.INDEX_NAME)) {
+        if (IndexController.LogicIndicesRegister.isMergedTable(TagAutocompleteData.INDEX_NAME)) {
             query.must(Query.term(IndexController.LogicIndicesRegister.METRIC_TABLE_NAME, TagAutocompleteData.INDEX_NAME));
         }
         final SearchBuilder search = Search.builder().query(query);
@@ -61,22 +65,22 @@ public class TagAutoCompleteQueryDAO extends EsDAO implements ITagAutoCompleteQu
                                       .size(limit));
 
         final SearchResponse response = getClient().search(
-            new TimeRangeIndexNameGenerator(
-                IndexController.LogicIndicesRegister.getPhysicalTableName(TagAutocompleteData.INDEX_NAME),
-                startSecondTB, endSecondTB
-            ),
+            IndexNames.rangeIndices(IndexFamily.of(TagAutocompleteData.INDEX_NAME), duration),
             search.build()
         );
-        Map<String, Object> terms =
-            (Map<String, Object>) response.getAggregations().get(TagAutocompleteData.TAG_KEY);
-        List<Map<String, Object>> buckets = (List<Map<String, Object>>) terms.get("buckets");
         Set<String> tagKeys = new HashSet<>();
-        for (Map<String, Object> bucket : buckets) {
-            String tagKey = (String) bucket.get("key");
-            if (StringUtil.isEmpty(tagKey)) {
-                continue;
+        if (Objects.nonNull(response.getAggregations())) {
+            Map<String, Object> terms =
+                (Map<String, Object>) response.getAggregations().get(TagAutocompleteData.TAG_KEY);
+            List<Map<String, Object>> buckets = (List<Map<String, Object>>) terms.get("buckets");
+
+            for (Map<String, Object> bucket : buckets) {
+                String tagKey = (String) bucket.get("key");
+                if (StringUtil.isEmpty(tagKey)) {
+                    continue;
+                }
+                tagKeys.add(tagKey);
             }
-            tagKeys.add(tagKey);
         }
         return tagKeys;
     }
@@ -84,20 +88,16 @@ public class TagAutoCompleteQueryDAO extends EsDAO implements ITagAutoCompleteQu
     @Override
     public Set<String> queryTagAutocompleteValues(final TagType tagType, final String tagKey,
                                                   final int limit,
-                                                  final long startSecondTB,
-                                                  final long endSecondTB) throws IOException {
+                                                  final Duration duration) throws IOException {
         BoolQueryBuilder query = Query.bool().must(Query.term(TagAutocompleteData.TAG_KEY, tagKey));
         query.must(Query.term(TagAutocompleteData.TAG_TYPE, tagType.name()));
-        if (IndexController.LogicIndicesRegister.isPhysicalTable(TagAutocompleteData.INDEX_NAME)) {
+        if (IndexController.LogicIndicesRegister.isMergedTable(TagAutocompleteData.INDEX_NAME)) {
             query.must(Query.term(IndexController.LogicIndicesRegister.METRIC_TABLE_NAME, TagAutocompleteData.INDEX_NAME));
         }
         final SearchBuilder search = Search.builder().query(query).size(limit);
 
         final SearchResponse response = getClient().search(
-            new TimeRangeIndexNameGenerator(
-                IndexController.LogicIndicesRegister.getPhysicalTableName(TagAutocompleteData.INDEX_NAME),
-                startSecondTB, endSecondTB
-            ),
+            IndexNames.rangeIndices(IndexFamily.of(TagAutocompleteData.INDEX_NAME), duration),
             search.build()
         );
         Set<String> tagValues = new HashSet<>();

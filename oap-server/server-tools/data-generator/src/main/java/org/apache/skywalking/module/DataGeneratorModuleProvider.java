@@ -19,18 +19,19 @@
 
 package org.apache.skywalking.module;
 
+import com.linecorp.armeria.common.HttpMethod;
 import java.util.Arrays;
 import java.util.List;
-import com.linecorp.armeria.common.HttpMethod;
 import org.apache.skywalking.oap.server.core.CoreModule;
 import org.apache.skywalking.oap.server.core.server.HTTPHandlerRegister;
-import org.apache.skywalking.oap.server.library.module.ModuleConfig;
 import org.apache.skywalking.oap.server.library.module.ModuleDefine;
 import org.apache.skywalking.oap.server.library.module.ModuleProvider;
 import org.apache.skywalking.oap.server.library.module.ModuleStartException;
 import org.apache.skywalking.oap.server.library.module.ServiceNotProvidedException;
 import org.apache.skywalking.restapi.LogGeneratorHandler;
 import org.apache.skywalking.restapi.SegmentGeneratorHandler;
+import org.apache.skywalking.oap.server.analyzer.module.AnalyzerModule;
+import org.apache.skywalking.oap.trace.analyzer.v2.module.TraceAnalyzerModule;
 
 public class DataGeneratorModuleProvider extends ModuleProvider {
 
@@ -45,7 +46,7 @@ public class DataGeneratorModuleProvider extends ModuleProvider {
     }
 
     @Override
-    public ModuleConfig createConfigBeanIfAbsent() {
+    public ConfigCreator newConfigCreator() {
         return null;
     }
 
@@ -75,6 +76,8 @@ public class DataGeneratorModuleProvider extends ModuleProvider {
 
     @Override
     public String[] requiredModules() {
-        return new String[0];
+        // The segment generator hands its segments to the trace analyzer's native rules, which run only with the
+        // agent analyzer's settings.
+        return new String[] {AnalyzerModule.NAME, TraceAnalyzerModule.NAME};
     }
 }

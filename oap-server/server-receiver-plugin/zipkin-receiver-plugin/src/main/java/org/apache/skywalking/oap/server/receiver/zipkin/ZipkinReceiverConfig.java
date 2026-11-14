@@ -31,11 +31,18 @@ public class ZipkinReceiverConfig extends ModuleConfig {
     private String restHost;
     private int restPort;
     private String restContextPath;
-    private int restMaxThreads = 200;
     private long restIdleTimeOut = 30000;
     private int restAcceptQueueSize = 0;
+    /**
+     * TLS settings for this HTTP server. The certificate and key are read from disk and
+     * reloaded on rotation without a restart. Server-side TLS only (no mTLS).
+     */
+    private boolean restSSLEnabled = false;
+    private String restSSLKeyPath;
+    private String restSSLCertChainPath;
     private String searchableTracesTags = DEFAULT_SEARCHABLE_TAG_KEYS;
     private int sampleRate = 10000;
+    private int maxSpansPerSecond = 0;
 
     private static final String DEFAULT_SEARCHABLE_TAG_KEYS = String.join(
         Const.COMMA,

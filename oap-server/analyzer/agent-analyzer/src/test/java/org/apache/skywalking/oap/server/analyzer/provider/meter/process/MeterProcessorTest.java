@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,11 +18,16 @@
 
 package org.apache.skywalking.oap.server.analyzer.provider.meter.process;
 
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
+
 import org.apache.skywalking.apm.network.language.agent.v3.MeterBucketValue;
 import org.apache.skywalking.apm.network.language.agent.v3.MeterData;
 import org.apache.skywalking.apm.network.language.agent.v3.MeterHistogram;
-import org.apache.skywalking.oap.server.analyzer.provider.meter.config.MeterConfig;
-import org.apache.skywalking.oap.server.analyzer.provider.meter.config.MeterConfigs;
+import org.apache.skywalking.oap.meter.analyzer.v2.prometheus.rule.Rule;
+import org.apache.skywalking.oap.meter.analyzer.v2.prometheus.rule.Rules;
 import org.apache.skywalking.oap.server.core.CoreModule;
 import org.apache.skywalking.oap.server.core.analysis.StreamDefinition;
 import org.apache.skywalking.oap.server.core.analysis.meter.MeterEntity;
@@ -38,19 +43,14 @@ import org.apache.skywalking.oap.server.library.module.ModuleManager;
 import org.apache.skywalking.oap.server.library.module.ModuleProviderHolder;
 import org.apache.skywalking.oap.server.library.module.ModuleServiceHolder;
 import org.apache.skywalking.oap.server.library.module.ModuleStartException;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.Mockito;
-import org.mockito.junit.MockitoJUnitRunner;
-import org.powermock.reflect.Whitebox;
-
-import java.util.Arrays;
-import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.apache.skywalking.oap.server.testing.util.ReflectUtil;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -60,7 +60,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class MeterProcessorTest {
 
     @Mock
@@ -71,24 +71,29 @@ public class MeterProcessorTest {
     private String service = "test-service";
     private String serviceInstance = "test-service-instance";
 
-    @BeforeClass
+    @BeforeAll
     public static void init() {
         MeterEntity.setNamingControl(
                 new NamingControl(512, 512, 512, new EndpointNameGrouping()));
     }
 
-    @Before
-    public void setup() throws StorageException, ModuleStartException {
+    @BeforeEach
+    public void setup() throws StorageException, ModuleStartException, IOException {
         meterSystem = spy(new MeterSystem(moduleManager));
         when(moduleManager.find(anyString())).thenReturn(mock(ModuleProviderHolder.class));
         when(moduleManager.find(CoreModule.NAME).provider()).thenReturn(mock(ModuleServiceHolder.class));
         when(moduleManager.find(CoreModule.NAME).provider().getService(MeterSystem.class)).thenReturn(meterSystem);
-        Whitebox.setInternalState(MetricsStreamProcessor.class, "PROCESSOR",
-                Mockito.spy(MetricsStreamProcessor.getInstance())
+        MetricsStreamProcessor mockProcessor = mock(MetricsStreamProcessor.class);
+        ReflectUtil.setInternalState(
+                MetricsStreamProcessor.class,
+                "PROCESSOR",
+                mockProcessor
         );
-        doNothing().when(MetricsStreamProcessor.getInstance()).create(any(), (StreamDefinition) any(), any());
+        // MetricsStreamProcessor.create now takes a StorageManipulationOpt on every path so
+        // the shape-mismatch gate at the installer level can surface to stream registration.
+        doNothing().when(mockProcessor).create(any(), (StreamDefinition) any(), any(), any());
         final MeterProcessService processService = new MeterProcessService(moduleManager);
-        List<MeterConfig> config = MeterConfigs.loadConfig("meter-analyzer-config", Arrays.asList("config"));
+        List<Rule> config = Rules.loadRules("meter-analyzer-config", Arrays.asList("config"));
         processService.start(config);
         processor = new MeterProcessor(processService);
     }
@@ -103,15 +108,15 @@ public class MeterProcessorTest {
             return null;
         }).when(meterSystem).doStreamingCalculation(any());
         processor.read(MeterData.newBuilder()
-                        .setService(service)
-                        .setServiceInstance(serviceInstance)
-                        .setTimestamp(System.currentTimeMillis())
-                        .setHistogram(MeterHistogram.newBuilder()
-                                .setName("test_histogram")
-                                .addValues(MeterBucketValue.newBuilder().setIsNegativeInfinity(true).setCount(10).build())
-                                .addValues(MeterBucketValue.newBuilder().setBucket(0).setCount(20).build())
-                                .addValues(MeterBucketValue.newBuilder().setBucket(10).setCount(10).build())
-                                .build())
+                .setService(service)
+                .setServiceInstance(serviceInstance)
+                .setTimestamp(System.currentTimeMillis())
+                .setHistogram(MeterHistogram.newBuilder()
+                        .setName("test_histogram")
+                        .addValues(MeterBucketValue.newBuilder().setIsNegativeInfinity(true).setCount(10).build())
+                        .addValues(MeterBucketValue.newBuilder().setBucket(0).setCount(20).build())
+                        .addValues(MeterBucketValue.newBuilder().setBucket(10).setCount(10).build())
+                        .build())
                 .build());
         processor.process();
 
@@ -121,12 +126,12 @@ public class MeterProcessorTest {
         summation.put(Bucket.INFINITE_NEGATIVE, 10L);
         summation.put("0", 20L);
         summation.put("10", 10L);
-        Assert.assertEquals(summation, func.getSummation());
+        Assertions.assertEquals(summation, func.getSummation());
         final DataTable count = new DataTable();
         count.put(Bucket.INFINITE_NEGATIVE, 1L);
         count.put("0", 1L);
         count.put("10", 1L);
-        Assert.assertEquals(count, func.getCount());
+        Assertions.assertEquals(count, func.getCount());
     }
 
 }

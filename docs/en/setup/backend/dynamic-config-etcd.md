@@ -14,7 +14,7 @@ configuration:
     password: ${SW_CONFIG_ETCD_password:}
 ```
 
-**NOTE**: Since 8.7.0, only the v3 protocol is supported.
+**NOTE**: Only the v3 protocol is supported.
 
 ## Config Storage
 ### Single Config
@@ -22,7 +22,7 @@ Single configs in etcd are key/value pairs:
 
 | Key | Value |
 |-----|-----|
-| {namespace}/configKey | configVaule |
+| {namespace}/configKey | configValue |
 
 e.g. The config is:
 ```

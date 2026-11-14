@@ -18,12 +18,14 @@
 
 package org.apache.skywalking.oap.server.core.analysis.manual.log;
 
-import java.util.List;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.skywalking.oap.server.core.UnexpectedException;
+import org.apache.skywalking.oap.server.core.analysis.manual.searchtag.Tag;
+import org.apache.skywalking.oap.server.core.analysis.record.LongText;
 import org.apache.skywalking.oap.server.core.analysis.record.Record;
 import org.apache.skywalking.oap.server.core.query.type.ContentType;
+import org.apache.skywalking.oap.server.core.storage.StorageID;
 import org.apache.skywalking.oap.server.core.storage.annotation.BanyanDB;
 import org.apache.skywalking.oap.server.core.storage.annotation.Column;
 import org.apache.skywalking.oap.server.core.storage.annotation.ElasticSearch;
@@ -31,6 +33,8 @@ import org.apache.skywalking.oap.server.core.storage.annotation.SQLDatabase;
 import org.apache.skywalking.oap.server.core.storage.type.Convert2Entity;
 import org.apache.skywalking.oap.server.core.storage.type.Convert2Storage;
 import org.apache.skywalking.oap.server.core.storage.type.StorageBuilder;
+
+import java.util.List;
 
 public abstract class AbstractLogRecord extends Record {
     public static final String ADDITIONAL_TAG_TABLE = "log_tag";
@@ -40,6 +44,7 @@ public abstract class AbstractLogRecord extends Record {
     public static final String TRACE_ID = "trace_id";
     public static final String TRACE_SEGMENT_ID = "trace_segment_id";
     public static final String SPAN_ID = "span_id";
+    public static final String OTLP_SPAN_ID = "otlp_span_id";
     public static final String CONTENT_TYPE = "content_type";
     public static final String CONTENT = "content";
     public static final String TAGS_RAW_DATA = "tags_raw_data";
@@ -48,45 +53,56 @@ public abstract class AbstractLogRecord extends Record {
 
     @Setter
     @Getter
-    @Column(columnName = SERVICE_ID)
-    @BanyanDB.ShardingKey(index = 0)
+    @Column(name = SERVICE_ID)
+    @BanyanDB.SeriesID(index = 0)
+    @SQLDatabase.AdditionalEntity(additionalTables = {ADDITIONAL_TAG_TABLE}, reserveOriginalColumns = true)
     private String serviceId;
     @Setter
     @Getter
-    @Column(columnName = SERVICE_INSTANCE_ID)
-    @BanyanDB.ShardingKey(index = 1)
+    @Column(name = SERVICE_INSTANCE_ID, length = 512)
+    @BanyanDB.SeriesID(index = 1)
     private String serviceInstanceId;
     @Setter
     @Getter
-    @Column(columnName = ENDPOINT_ID)
+    @Column(name = ENDPOINT_ID, length = 512)
     private String endpointId;
     @Setter
     @Getter
-    @Column(columnName = TRACE_ID, length = 150)
-    @BanyanDB.GlobalIndex
+    @Column(name = TRACE_ID, length = 150)
+    @BanyanDB.IndexRule(indexType = BanyanDB.IndexRule.IndexType.SKIPPING)
     private String traceId;
     @Setter
     @Getter
-    @Column(columnName = TRACE_SEGMENT_ID, length = 150)
-    @BanyanDB.GlobalIndex
+    @Column(name = TRACE_SEGMENT_ID, length = 150)
     private String traceSegmentId;
     @Setter
     @Getter
-    @Column(columnName = SPAN_ID)
+    @Column(name = SPAN_ID)
     @BanyanDB.NoIndexing
     private int spanId;
+    /**
+     * The span that wrote the log when it is an OTLP or Zipkin span: its 16 lowercase hex characters.
+     * A SkyWalking native span is {@link #traceSegmentId} + {@link #spanId} instead, as a native span id
+     * is a number counted within its segment.
+     */
     @Setter
     @Getter
-    @Column(columnName = CONTENT_TYPE, storageOnly = true)
+    @Column(name = OTLP_SPAN_ID, length = 64)
+    @BanyanDB.NoIndexing
+    private String otlpSpanId;
+    @Setter
+    @Getter
+    @Column(name = CONTENT_TYPE, storageOnly = true)
     private int contentType = ContentType.NONE.value();
     @Setter
     @Getter
-    @Column(columnName = CONTENT, length = 1_000_000)
+    @Column(name = CONTENT, length = 1_000_000)
     @ElasticSearch.MatchQuery(analyzer = ElasticSearch.MatchQuery.AnalyzerType.OAP_LOG_ANALYZER)
-    private String content;
+    private LongText content;
     @Setter
     @Getter
-    @Column(columnName = TIMESTAMP)
+    @ElasticSearch.EnableDocValues
+    @Column(name = TIMESTAMP)
     private long timestamp;
 
     /**
@@ -94,16 +110,16 @@ public abstract class AbstractLogRecord extends Record {
      */
     @Setter
     @Getter
-    @Column(columnName = TAGS_RAW_DATA, storageOnly = true)
+    @Column(name = TAGS_RAW_DATA, storageOnly = true)
     private byte[] tagsRawData;
     @Setter
     @Getter
-    @Column(columnName = TAGS, indexOnly = true)
+    @Column(name = TAGS, indexOnly = true, length = Tag.TAG_LENGTH)
     @SQLDatabase.AdditionalEntity(additionalTables = {ADDITIONAL_TAG_TABLE})
     private List<String> tagsInString;
 
     @Override
-    public String id() {
+    public StorageID id() {
         throw new UnexpectedException("AbstractLogRecord doesn't provide id()");
     }
 
@@ -115,8 +131,9 @@ public abstract class AbstractLogRecord extends Record {
             record.setTraceId((String) converter.get(TRACE_ID));
             record.setTraceSegmentId((String) converter.get(TRACE_SEGMENT_ID));
             record.setSpanId(((Number) converter.get(SPAN_ID)).intValue());
+            record.setOtlpSpanId((String) converter.get(OTLP_SPAN_ID));
             record.setContentType(((Number) converter.get(CONTENT_TYPE)).intValue());
-            record.setContent((String) converter.get(CONTENT));
+            record.setContent(new LongText((String) converter.get(CONTENT)));
             record.setTimestamp(((Number) converter.get(TIMESTAMP)).longValue());
             record.setTagsRawData(converter.getBytes(TAGS_RAW_DATA));
             record.setTimeBucket(((Number) converter.get(TIME_BUCKET)).longValue());
@@ -129,6 +146,7 @@ public abstract class AbstractLogRecord extends Record {
             converter.accept(TRACE_ID, record.getTraceId());
             converter.accept(TRACE_SEGMENT_ID, record.getTraceSegmentId());
             converter.accept(SPAN_ID, record.getSpanId());
+            converter.accept(OTLP_SPAN_ID, record.getOtlpSpanId());
             converter.accept(TIME_BUCKET, record.getTimeBucket());
             converter.accept(CONTENT_TYPE, record.getContentType());
             converter.accept(CONTENT, record.getContent());

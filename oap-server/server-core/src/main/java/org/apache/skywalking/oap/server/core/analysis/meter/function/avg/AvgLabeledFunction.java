@@ -18,40 +18,44 @@
 
 package org.apache.skywalking.oap.server.core.analysis.meter.function.avg;
 
-import java.util.Objects;
-import java.util.Set;
-import lombok.Getter;
-import lombok.Setter;
-import lombok.ToString;
 import org.apache.skywalking.oap.server.core.Const;
 import org.apache.skywalking.oap.server.core.UnexpectedException;
 import org.apache.skywalking.oap.server.core.analysis.manual.instance.InstanceTraffic;
 import org.apache.skywalking.oap.server.core.analysis.meter.Meter;
 import org.apache.skywalking.oap.server.core.analysis.meter.MeterEntity;
 import org.apache.skywalking.oap.server.core.analysis.meter.function.AcceptableValue;
+import org.apache.skywalking.oap.server.core.analysis.meter.function.LabeledValueLimits;
 import org.apache.skywalking.oap.server.core.analysis.meter.function.MeterFunction;
 import org.apache.skywalking.oap.server.core.analysis.metrics.DataTable;
 import org.apache.skywalking.oap.server.core.analysis.metrics.LabeledValueHolder;
 import org.apache.skywalking.oap.server.core.analysis.metrics.Metrics;
 import org.apache.skywalking.oap.server.core.remote.grpc.proto.RemoteData;
+import org.apache.skywalking.oap.server.core.storage.StorageID;
 import org.apache.skywalking.oap.server.core.storage.annotation.BanyanDB;
 import org.apache.skywalking.oap.server.core.storage.annotation.Column;
 import org.apache.skywalking.oap.server.core.storage.annotation.ElasticSearch;
 import org.apache.skywalking.oap.server.core.storage.type.Convert2Entity;
 import org.apache.skywalking.oap.server.core.storage.type.Convert2Storage;
 import org.apache.skywalking.oap.server.core.storage.type.StorageBuilder;
+import java.util.Objects;
+import java.util.Set;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.ToString;
+import org.apache.skywalking.oap.server.library.util.StringUtil;
 
 @MeterFunction(functionName = "avgLabeled")
 @ToString
 public abstract class AvgLabeledFunction extends Meter implements AcceptableValue<DataTable>, LabeledValueHolder {
-    protected static final String SUMMATION = "summation";
-    protected static final String COUNT = "count";
-    protected static final String VALUE = "value";
+    protected static final String SUMMATION = "datatable_summation";
+    protected static final String COUNT = "datatable_count";
+    protected static final String VALUE = "datatable_value";
 
     @Setter
     @Getter
-    @Column(columnName = ENTITY_ID, length = 512)
-    @BanyanDB.ShardingKey(index = 0)
+    @ElasticSearch.EnableDocValues
+    @Column(name = ENTITY_ID, length = 512)
+    @BanyanDB.SeriesID(index = 0)
     private String entityId;
 
     /**
@@ -59,30 +63,33 @@ public abstract class AvgLabeledFunction extends Meter implements AcceptableValu
      */
     @Setter
     @Getter
-    @Column(columnName = InstanceTraffic.SERVICE_ID)
+    @Column(name = InstanceTraffic.SERVICE_ID)
     private String serviceId;
 
     @Getter
     @Setter
-    @Column(columnName = SUMMATION, storageOnly = true)
-    @ElasticSearch.Column(columnAlias = "datatable_summation")
+    @Column(name = SUMMATION, storageOnly = true)
+    @ElasticSearch.Column(legacyName = "summation")
+    @BanyanDB.MeasureField
     protected DataTable summation = new DataTable(30);
     @Getter
     @Setter
-    @Column(columnName = COUNT, storageOnly = true)
-    @ElasticSearch.Column(columnAlias = "datatable_count")
+    @Column(name = COUNT, storageOnly = true)
+    @ElasticSearch.Column(legacyName = "count")
+    @BanyanDB.MeasureField
     protected DataTable count = new DataTable(30);
     @Getter
     @Setter
-    @Column(columnName = VALUE, dataType = Column.ValueDataType.LABELED_VALUE, storageOnly = true)
-    @ElasticSearch.Column(columnAlias = "datatable_value")
+    @Column(name = VALUE, dataType = Column.ValueDataType.LABELED_VALUE, storageOnly = true)
+    @ElasticSearch.Column(legacyName = "value")
+    @BanyanDB.MeasureField
     private DataTable value = new DataTable(30);
 
     @Override
     public final boolean combine(Metrics metrics) {
         AvgLabeledFunction longAvgMetrics = (AvgLabeledFunction) metrics;
-        summation.append(longAvgMetrics.summation);
-        count.append(longAvgMetrics.count);
+        summation.append(longAvgMetrics.summation, LabeledValueLimits.of(this, longAvgMetrics));
+        appendCounts(longAvgMetrics.count);
         return true;
     }
 
@@ -112,8 +119,15 @@ public abstract class AvgLabeledFunction extends Meter implements AcceptableValu
         metrics.setEntityId(getEntityId());
         metrics.setTimeBucket(toTimeBucketInHour());
         metrics.setServiceId(getServiceId());
-        metrics.setSummation(getSummation());
-        metrics.setCount(getCount());
+        metrics.getSummation().copyFrom(getSummation());
+        metrics.getCount().copyFrom(getCount());
+
+        metrics.setAttr0(getAttr0());
+        metrics.setAttr1(getAttr1());
+        metrics.setAttr2(getAttr2());
+        metrics.setAttr3(getAttr3());
+        metrics.setAttr4(getAttr4());
+        metrics.setAttr5(getAttr5());
         return metrics;
     }
 
@@ -123,8 +137,15 @@ public abstract class AvgLabeledFunction extends Meter implements AcceptableValu
         metrics.setEntityId(getEntityId());
         metrics.setTimeBucket(toTimeBucketInDay());
         metrics.setServiceId(getServiceId());
-        metrics.setSummation(getSummation());
-        metrics.setCount(getCount());
+        metrics.getSummation().copyFrom(getSummation());
+        metrics.getCount().copyFrom(getCount());
+
+        metrics.setAttr0(getAttr0());
+        metrics.setAttr1(getAttr1());
+        metrics.setAttr2(getAttr2());
+        metrics.setAttr3(getAttr3());
+        metrics.setAttr4(getAttr4());
+        metrics.setAttr5(getAttr5());
         return metrics;
     }
 
@@ -141,6 +162,30 @@ public abstract class AvgLabeledFunction extends Meter implements AcceptableValu
 
         this.entityId = remoteData.getDataStrings(0);
         this.serviceId = remoteData.getDataStrings(1);
+
+        if (StringUtil.isNotEmpty(remoteData.getDataStrings(2))) {
+            setAttr0(remoteData.getDataStrings(2));
+        }
+
+        if (StringUtil.isNotEmpty(remoteData.getDataStrings(3))) {
+            setAttr1(remoteData.getDataStrings(3));
+        }
+
+        if (StringUtil.isNotEmpty(remoteData.getDataStrings(4))) {
+            setAttr2(remoteData.getDataStrings(4));
+        }
+
+        if (StringUtil.isNotEmpty(remoteData.getDataStrings(5))) {
+            setAttr3(remoteData.getDataStrings(5));
+        }
+
+        if (StringUtil.isNotEmpty(remoteData.getDataStrings(6))) {
+            setAttr4(remoteData.getDataStrings(6));
+        }
+
+        if (StringUtil.isNotEmpty(remoteData.getDataStrings(7))) {
+            setAttr5(remoteData.getDataStrings(7));
+        }
     }
 
     @Override
@@ -153,22 +198,41 @@ public abstract class AvgLabeledFunction extends Meter implements AcceptableValu
         remoteBuilder.addDataStrings(entityId);
         remoteBuilder.addDataStrings(serviceId);
 
+        remoteBuilder.addDataStrings(getAttr0() == null ? Const.EMPTY_STRING : getAttr0());
+        remoteBuilder.addDataStrings(getAttr1() == null ? Const.EMPTY_STRING : getAttr1());
+        remoteBuilder.addDataStrings(getAttr2() == null ? Const.EMPTY_STRING : getAttr2());
+        remoteBuilder.addDataStrings(getAttr3() == null ? Const.EMPTY_STRING : getAttr3());
+        remoteBuilder.addDataStrings(getAttr4() == null ? Const.EMPTY_STRING : getAttr4());
+        remoteBuilder.addDataStrings(getAttr5() == null ? Const.EMPTY_STRING : getAttr5());
+
         return remoteBuilder;
     }
 
     @Override
-    protected String id0() {
-        return getTimeBucket() + Const.ID_CONNECTOR + entityId;
+    protected StorageID id0() {
+        return new StorageID()
+            .append(TIME_BUCKET, getTimeBucket())
+            .append(ENTITY_ID, getEntityId());
     }
 
     @Override
     public void accept(final MeterEntity entity, final DataTable value) {
+        decorate(entity);
         this.entityId = entity.id();
         this.serviceId = entity.serviceId();
-        this.summation.append(value);
+        this.summation.append(value, LabeledValueLimits.of(this));
         DataTable c = new DataTable();
         value.keys().forEach(key -> c.put(key, 1L));
-        this.count.append(c);
+        appendCounts(c);
+    }
+
+    /**
+     * Count only the label sets the summation kept, so a limit leaves the two tables with the same keys.
+     */
+    private void appendCounts(final DataTable counts) {
+        final DataTable kept = new DataTable();
+        counts.keys().stream().filter(summation::hasKey).forEach(key -> kept.put(key, counts.get(key)));
+        count.append(kept);
     }
 
     @Override
@@ -191,6 +255,13 @@ public abstract class AvgLabeledFunction extends Meter implements AcceptableValu
             metrics.setTimeBucket(((Number) converter.get(TIME_BUCKET)).longValue());
             metrics.setServiceId((String) converter.get(InstanceTraffic.SERVICE_ID));
             metrics.setEntityId((String) converter.get(ENTITY_ID));
+
+            metrics.setAttr0((String) converter.get(ATTR0));
+            metrics.setAttr1((String) converter.get(ATTR1));
+            metrics.setAttr2((String) converter.get(ATTR2));
+            metrics.setAttr3((String) converter.get(ATTR3));
+            metrics.setAttr4((String) converter.get(ATTR4));
+            metrics.setAttr5((String) converter.get(ATTR5));
             return metrics;
         }
 
@@ -202,6 +273,13 @@ public abstract class AvgLabeledFunction extends Meter implements AcceptableValu
             converter.accept(TIME_BUCKET, storageData.getTimeBucket());
             converter.accept(InstanceTraffic.SERVICE_ID, storageData.getServiceId());
             converter.accept(ENTITY_ID, storageData.getEntityId());
+
+            converter.accept(ATTR0, storageData.getAttr0());
+            converter.accept(ATTR1, storageData.getAttr1());
+            converter.accept(ATTR2, storageData.getAttr2());
+            converter.accept(ATTR3, storageData.getAttr3());
+            converter.accept(ATTR4, storageData.getAttr4());
+            converter.accept(ATTR5, storageData.getAttr5());
         }
     }
 

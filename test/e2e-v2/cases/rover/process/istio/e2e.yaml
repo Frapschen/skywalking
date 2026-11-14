@@ -17,16 +17,15 @@
 
 setup:
   env: kind
-  file: kind.yaml
+  file: ../../../istio/kind.k28.yaml
   init-system-environment: ../../../../script/env
   kind:
     import-images:
-      - skywalking/ui:latest
       - skywalking/oap:latest
     expose-ports:
       - namespace: istio-system
-        resource: service/skywalking-ui
-        port: 80
+        resource: service/skywalking-oap
+        port: 12800
   steps:
     - name: set PATH
       command: export PATH=/tmp/skywalking-infra-e2e/bin:$PATH
@@ -45,24 +44,28 @@ setup:
       command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh helm
     - name: Install kubectl
       command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh kubectl
+    - name: Install ECK operator CRDs
+      command: |
+        helm pull oci://ghcr.io/apache/skywalking-helm/skywalking-helm \
+          --version "0.0.0-${SW_KUBERNETES_COMMIT_SHA}" --untar
+        helm dep up skywalking-helm
+        tar xzf skywalking-helm/charts/eck-operator-3.3.1.tgz -C /tmp eck-operator/charts/eck-operator-crds
+        helm -n istio-system install eck-crds /tmp/eck-operator/charts/eck-operator-crds \
+          --create-namespace
     - name: Install SkyWalking
       command: |
-        rm -rf skywalking-kubernetes && git clone https://github.com/apache/skywalking-kubernetes.git
-        cd skywalking-kubernetes
-        git reset --hard $SW_KUBERNETES_COMMIT_SHA
-        cd chart
-        helm dep up skywalking
-        helm -n istio-system install skywalking skywalking \
-                       --set fullnameOverride=skywalking \
-                       --set elasticsearch.replicas=1 \
-                       --set elasticsearch.minimumMasterNodes=1 \
-                       --set elasticsearch.imageTag=7.5.1 \
-                       --set oap.replicas=1 \
-                       --set ui.image.repository=skywalking/ui \
-                       --set ui.image.tag=latest \
-                       --set oap.image.tag=latest \
-                       --set oap.image.repository=skywalking/oap \
-                       --set oap.storageType=elasticsearch
+        helm -n istio-system install skywalking \
+          oci://ghcr.io/apache/skywalking-helm/skywalking-helm \
+          --version "0.0.0-${SW_KUBERNETES_COMMIT_SHA}" \
+          --set fullnameOverride=skywalking \
+          --set eck-operator.installCRDs=false \
+          --set oap.replicas=1 \
+          --set ui.enabled=false \
+          --set oap.image.tag=latest \
+          --set oap.image.repository=skywalking/oap \
+          --set oap.storageType=elasticsearch \
+          --set oap.env.SW_HEALTH_CHECKER=default \
+          -f test/e2e-v2/cases/rover/process/istio/values.yaml
       wait:
         - namespace: istio-system
           resource: deployments/skywalking-oap
@@ -92,14 +95,14 @@ verify:
     interval: 10s
   cases:
     # service list
-    - query: swctl --display yaml --base-url=http://${service_skywalking_ui_host}:${service_skywalking_ui_80}/graphql service ls
+    - query: swctl --display yaml --base-url=http://${service_skywalking_oap_host}:${service_skywalking_oap_12800}/graphql service ls
       expected: expected/service.yml
     # service instance list
-    - query: swctl --display yaml --base-url=http://${service_skywalking_ui_host}:${service_skywalking_ui_80}/graphql instance list --service-name=default::productpage
+    - query: swctl --display yaml --base-url=http://${service_skywalking_oap_host}:${service_skywalking_oap_12800}/graphql instance list --service-name=productpage.default
       expected: expected/service-instance.yml
     # process list
     - query: |
-        swctl --display yaml --base-url=http://${service_skywalking_ui_host}:${service_skywalking_ui_80}/graphql process list --service-name=default::productpage --instance-name=$( \
-          swctl --display yaml --base-url=http://${service_skywalking_ui_host}:${service_skywalking_ui_80}/graphql instance list --service-name=default::productpage |yq e '.[0].name' - \
+        swctl --display yaml --base-url=http://${service_skywalking_oap_host}:${service_skywalking_oap_12800}/graphql process list --service-name=productpage.default --instance-name=$( \
+          swctl --display yaml --base-url=http://${service_skywalking_oap_host}:${service_skywalking_oap_12800}/graphql instance list --service-name=productpage.default |yq e '.[0].name' - \
         )
       expected: expected/process.yml

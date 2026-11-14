@@ -41,17 +41,20 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import javax.annotation.Nullable;
+import org.apache.skywalking.oap.query.zipkin.ZipkinQueryService;
 import org.apache.skywalking.oap.server.core.CoreModule;
-import org.apache.skywalking.oap.server.core.analysis.DownSampling;
-import org.apache.skywalking.oap.server.core.analysis.TimeBucket;
 import org.apache.skywalking.oap.server.core.analysis.manual.searchtag.TagType;
 import org.apache.skywalking.oap.server.core.query.TagAutoCompleteQueryService;
-import org.apache.skywalking.oap.server.core.storage.StorageModule;
-import org.apache.skywalking.oap.server.core.storage.query.IZipkinQueryDAO;
+import org.apache.skywalking.oap.server.core.query.enumeration.Step;
+import org.apache.skywalking.oap.server.core.query.input.Duration;
+import org.apache.skywalking.oap.server.core.query.type.debugging.DebuggingSpan;
+import org.apache.skywalking.oap.server.core.query.type.debugging.DebuggingTraceContext;
 import org.apache.skywalking.oap.server.library.module.ModuleManager;
 import org.apache.skywalking.oap.query.zipkin.ZipkinQueryConfig;
 import org.apache.skywalking.oap.server.library.util.CollectionUtils;
 import org.apache.skywalking.oap.server.library.util.StringUtil;
+import org.joda.time.DateTime;
 import zipkin2.Span;
 import zipkin2.codec.SpanBytesEncoder;
 import zipkin2.storage.QueryRequest;
@@ -68,11 +71,12 @@ import static com.linecorp.armeria.common.MediaType.ANY_TEXT_TYPE;
 public class ZipkinQueryHandler {
     private final ZipkinQueryConfig config;
     private final ModuleManager moduleManager;
-    private IZipkinQueryDAO zipkinQueryDAO;
+    private final ZipkinQueryService zipkinQueryService;
     private TagAutoCompleteQueryService tagQueryService;
     private final long defaultLookback;
     private final int namesMaxAge;
     private static final Gson GSON = new Gson();
+    private boolean supportTraceV2 = false;
 
     volatile int serviceCount;
 
@@ -82,13 +86,7 @@ public class ZipkinQueryHandler {
         this.moduleManager = moduleManager;
         this.defaultLookback = config.getLookback();
         this.namesMaxAge = config.getNamesMaxAge();
-    }
-
-    private IZipkinQueryDAO getZipkinQueryDAO() {
-        if (zipkinQueryDAO == null) {
-            zipkinQueryDAO = moduleManager.find(StorageModule.NAME).provider().getService(IZipkinQueryDAO.class);
-        }
-        return zipkinQueryDAO;
+        this.zipkinQueryService = new ZipkinQueryService(moduleManager);
     }
 
     private TagAutoCompleteQueryService getTagQueryService() {
@@ -119,7 +117,7 @@ public class ZipkinQueryHandler {
     @Get("/api/v2/services")
     @Blocking
     public AggregatedHttpResponse getServiceNames() throws IOException {
-        List<String> serviceNames = getZipkinQueryDAO().getServiceNames();
+        List<String> serviceNames = zipkinQueryService.getServiceNames();
         serviceCount = serviceNames.size();
        return cachedResponse(serviceCount > 3, serviceNames);
     }
@@ -127,28 +125,53 @@ public class ZipkinQueryHandler {
     @Get("/api/v2/remoteServices")
     @Blocking
     public AggregatedHttpResponse getRemoteServiceNames(@Param("serviceName") String serviceName) throws IOException {
-        List<String> remoteServiceNames = getZipkinQueryDAO().getRemoteServiceNames(serviceName);
+        List<String> remoteServiceNames = zipkinQueryService.getRemoteServiceNames(serviceName);
         return cachedResponse(serviceCount > 3, remoteServiceNames);
     }
 
     @Get("/api/v2/spans")
     @Blocking
     public AggregatedHttpResponse getSpanNames(@Param("serviceName") String serviceName) throws IOException {
-        List<String> spanNames = getZipkinQueryDAO().getSpanNames(serviceName);
+        List<String> spanNames = zipkinQueryService.getSpanNames(serviceName);
         return cachedResponse(serviceCount > 3, spanNames);
     }
 
+    /**
+     * {@code coldStage}, {@code endTs} and {@code lookback} are SkyWalking additions to the Zipkin API, see
+     * {@link #buildOptionalDuration(Optional, Optional, Optional)}.
+     */
     @Get("/api/v2/trace/{traceId}")
     @Blocking
-    public AggregatedHttpResponse getTraceById(@Param("traceId") String traceId) throws IOException {
-        if (StringUtil.isEmpty(traceId)) {
-            return AggregatedHttpResponse.of(BAD_REQUEST, ANY_TEXT_TYPE, "traceId is empty or null");
+    public AggregatedHttpResponse getTraceById(@Param("traceId") String traceId,
+                                               @Param("coldStage") Optional<Boolean> coldStage,
+                                               @Param("endTs") Optional<Long> endTs,
+                                               @Param("lookback") Optional<Long> lookback) throws IOException {
+        final Duration duration = buildOptionalDuration(coldStage, endTs, lookback);
+        DebuggingTraceContext traceContext = DebuggingTraceContext.TRACE_CONTEXT.get();
+        DebuggingSpan debuggingSpan = null;
+        try {
+            StringBuilder builder = new StringBuilder();
+            if (traceContext != null) {
+                builder.append("Condition: traceId: ")
+                       .append(traceId)
+                       .append(", duration: ")
+                       .append(duration);
+                debuggingSpan = traceContext.createSpan("Query /api/v2/trace/{traceId}");
+                debuggingSpan.setMsg(builder.toString());
+            }
+            if (StringUtil.isEmpty(traceId)) {
+                return AggregatedHttpResponse.of(BAD_REQUEST, ANY_TEXT_TYPE, "traceId is empty or null");
+            }
+            List<Span> trace = zipkinQueryService.getTraceById(traceId, duration);
+            if (CollectionUtils.isEmpty(trace)) {
+                return AggregatedHttpResponse.of(NOT_FOUND, ANY_TEXT_TYPE, traceId + " not found");
+            }
+            return response(SpanBytesEncoder.JSON_V2.encodeList(trace));
+        } finally {
+            if (traceContext != null && debuggingSpan != null) {
+                traceContext.stopSpan(debuggingSpan);
+            }
         }
-        List<Span> trace = getZipkinQueryDAO().getTrace(Span.normalizeTraceId(traceId.trim()));
-        if (CollectionUtils.isEmpty(trace)) {
-            return AggregatedHttpResponse.of(NOT_FOUND, ANY_TEXT_TYPE, traceId + " not found");
-        }
-        return response(SpanBytesEncoder.JSON_V2.encodeList(trace));
     }
 
     @Get("/api/v2/traces")
@@ -162,7 +185,8 @@ public class ZipkinQueryHandler {
         @Param("maxDuration") Optional<Long> maxDuration,
         @Param("endTs") Optional<Long> endTs,
         @Param("lookback") Optional<Long> lookback,
-        @Default("10") @Param("limit") int limit) throws IOException {
+        @Default("10") @Param("limit") int limit,
+        @Param("coldStage") Optional<Boolean> coldStage) throws IOException {
         QueryRequest queryRequest =
             QueryRequest.newBuilder()
                         .serviceName(serviceName.orElse(null))
@@ -175,13 +199,39 @@ public class ZipkinQueryHandler {
                         .lookback(lookback.orElse(defaultLookback))
                         .limit(limit)
                         .build();
-        List<List<Span>> traces = getZipkinQueryDAO().getTraces(queryRequest);
-        return response(encodeTraces(traces));
+        DebuggingTraceContext traceContext = DebuggingTraceContext.TRACE_CONTEXT.get();
+        DebuggingSpan debuggingSpan = null;
+        try {
+            StringBuilder builder = new StringBuilder();
+            if (traceContext != null) {
+                builder.append("Condition: QueryRequest: ")
+                       .append(queryRequest)
+                       .append(", coldStage: ")
+                       .append(coldStage.orElse(false));
+                debuggingSpan = traceContext.createSpan("Query /api/v2/traces");
+                debuggingSpan.setMsg(builder.toString());
+            }
+            final Duration duration = buildDuration(
+                queryRequest.endTs(), queryRequest.lookback(), coldStage.orElse(false));
+            List<List<Span>> traces = zipkinQueryService.getTraces(queryRequest, duration);
+            return response(encodeTraces(traces));
+        } finally {
+            if (traceContext != null && debuggingSpan != null) {
+                traceContext.stopSpan(debuggingSpan);
+            }
+        }
     }
 
+    /**
+     * {@code coldStage}, {@code endTs} and {@code lookback} are SkyWalking additions to the Zipkin API, see
+     * {@link #buildOptionalDuration(Optional, Optional, Optional)}.
+     */
     @Get("/api/v2/traceMany")
     @Blocking
-    public AggregatedHttpResponse getTracesByIds(@Param("traceIds") String traceIds) throws IOException {
+    public AggregatedHttpResponse getTracesByIds(@Param("traceIds") String traceIds,
+                                                 @Param("coldStage") Optional<Boolean> coldStage,
+                                                 @Param("endTs") Optional<Long> endTs,
+                                                 @Param("lookback") Optional<Long> lookback) throws IOException {
         if (StringUtil.isEmpty(traceIds)) {
             return AggregatedHttpResponse.of(BAD_REQUEST, ANY_TEXT_TYPE, "traceIds is empty or null");
         }
@@ -193,35 +243,62 @@ public class ZipkinQueryHandler {
                 return AggregatedHttpResponse.of(BAD_REQUEST, ANY_TEXT_TYPE, "traceId: " + traceId + " duplicate ");
             }
         }
-
-        List<List<Span>> traces = getZipkinQueryDAO().getTraces(normalizeTraceIds);
+        List<List<Span>> traces = zipkinQueryService.getTracesByIds(
+            normalizeTraceIds, buildOptionalDuration(coldStage, endTs, lookback));
+        if (CollectionUtils.isEmpty(traces)) {
+            return AggregatedHttpResponse.of(NOT_FOUND, ANY_TEXT_TYPE, traceIds + " not found");
+        }
         return response(encodeTraces(traces));
     }
 
     @Get("/api/v2/autocompleteKeys")
     @Blocking
     public AggregatedHttpResponse getAutocompleteKeys() throws IOException {
-        long endTimeMillis = System.currentTimeMillis();
-        long startTimeMillis = endTimeMillis - defaultLookback;
-        Set<String> autocompleteKeys =
-            getTagQueryService().queryTagAutocompleteKeys(
-                TagType.ZIPKIN, TimeBucket.getTimeBucket(startTimeMillis, DownSampling.Second),
-                TimeBucket.getTimeBucket(endTimeMillis, DownSampling.Second)
-            );
+        final Duration duration = buildDuration(System.currentTimeMillis(), defaultLookback, false);
+        Set<String> autocompleteKeys = getTagQueryService().queryTagAutocompleteKeys(TagType.ZIPKIN, duration);
         return cachedResponse(true, new ArrayList<>(autocompleteKeys));
     }
 
     @Get("/api/v2/autocompleteValues")
     @Blocking
     public AggregatedHttpResponse getAutocompleteValues(@Param("key") String key) throws IOException {
-        long endTimeMillis = System.currentTimeMillis();
-        long startTimeMillis = endTimeMillis - defaultLookback;
-        Set<String> autocompleteValues =
-            getTagQueryService().queryTagAutocompleteValues(
-                TagType.ZIPKIN, key, TimeBucket.getTimeBucket(startTimeMillis, DownSampling.Second),
-                TimeBucket.getTimeBucket(endTimeMillis, DownSampling.Second)
-            );
+        final Duration duration = buildDuration(System.currentTimeMillis(), defaultLookback, false);
+        Set<String> autocompleteValues = getTagQueryService().queryTagAutocompleteValues(TagType.ZIPKIN, key, duration);
         return cachedResponse(autocompleteValues.size() > 3, new ArrayList<>(autocompleteValues));
+    }
+
+    /**
+     * Build the storage query duration from the Zipkin-style {@code endTs}/{@code lookback} pair (both in
+     * milliseconds). {@code coldStage} targets the BanyanDB cold lifecycle stage and is ignored by the other
+     * storages, like {@code Duration.coldStage} in the GraphQL trace query.
+     */
+    private Duration buildDuration(final long endTs, final long lookback, final boolean coldStage) {
+        final Duration duration = new Duration();
+        duration.setStep(Step.SECOND);
+        final DateTime endTime = new DateTime(endTs);
+        final DateTime startTime = endTime.minus(org.joda.time.Duration.millis(lookback));
+        duration.setStart(startTime.toString("yyyy-MM-dd HHmmss"));
+        duration.setEnd(endTime.toString("yyyy-MM-dd HHmmss"));
+        duration.setColdStage(coldStage);
+        return duration;
+    }
+
+    /**
+     * The Zipkin API has no time range on the trace-by-id lookups, so a plain Zipkin request keeps the
+     * pre-existing null duration and the storage default (BanyanDB searches everything its hot/warm stages
+     * retain). Only when the caller passes any of the additional {@code coldStage}/{@code endTs}/{@code lookback}
+     * parameters is a duration built, with the same defaults as {@code /api/v2/traces}: {@code endTs} is now,
+     * {@code lookback} is the configured {@code lookback}.
+     */
+    @Nullable
+    private Duration buildOptionalDuration(final Optional<Boolean> coldStage,
+                                           final Optional<Long> endTs,
+                                           final Optional<Long> lookback) {
+        if (coldStage.isEmpty() && endTs.isEmpty() && lookback.isEmpty()) {
+            return null;
+        }
+        return buildDuration(
+            endTs.orElse(System.currentTimeMillis()), lookback.orElse(defaultLookback), coldStage.orElse(false));
     }
 
     private AggregatedHttpResponse response(byte[] body) {

@@ -28,6 +28,8 @@ import org.apache.skywalking.oap.server.core.analysis.metrics.Metrics;
 import org.apache.skywalking.oap.server.core.analysis.worker.MetricsStreamProcessor;
 import org.apache.skywalking.oap.server.core.remote.grpc.proto.RemoteData;
 import org.apache.skywalking.oap.server.core.source.DefaultScopeDefine;
+import org.apache.skywalking.oap.server.core.storage.StorageID;
+import org.apache.skywalking.oap.server.core.storage.annotation.BanyanDB;
 import org.apache.skywalking.oap.server.core.storage.annotation.Column;
 import org.apache.skywalking.oap.server.core.storage.type.Convert2Entity;
 import org.apache.skywalking.oap.server.core.storage.type.Convert2Storage;
@@ -40,6 +42,7 @@ import org.apache.skywalking.oap.server.core.storage.type.StorageBuilder;
     "serviceName",
     "spanName"
 })
+@BanyanDB.IndexMode
 public class ZipkinServiceSpanTraffic extends Metrics {
 
     public static final String INDEX_NAME = "zipkin_service_span_traffic";
@@ -49,16 +52,16 @@ public class ZipkinServiceSpanTraffic extends Metrics {
 
     @Setter
     @Getter
-    @Column(columnName = SERVICE_NAME)
+    @Column(name = SERVICE_NAME)
     private String serviceName;
     @Setter
     @Getter
-    @Column(columnName = SPAN_NAME)
+    @Column(name = SPAN_NAME)
     private String spanName = Const.EMPTY_STRING;
 
     @Override
-    protected String id0() {
-        return serviceName + Const.ID_CONNECTOR + spanName;
+    protected StorageID id0() {
+        return new StorageID().append(serviceName).append(SPAN_NAME, spanName);
     }
 
     @Override

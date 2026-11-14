@@ -18,40 +18,44 @@
 
 package org.apache.skywalking.oap.server.storage.plugin.elasticsearch.query.zipkin;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import javax.annotation.Nullable;
 import org.apache.skywalking.library.elasticsearch.requests.search.BoolQueryBuilder;
 import org.apache.skywalking.library.elasticsearch.requests.search.Query;
 import org.apache.skywalking.library.elasticsearch.requests.search.Search;
 import org.apache.skywalking.library.elasticsearch.requests.search.SearchBuilder;
 import org.apache.skywalking.library.elasticsearch.requests.search.SearchParams;
+import org.apache.skywalking.library.elasticsearch.requests.search.Sort;
 import org.apache.skywalking.library.elasticsearch.requests.search.aggregation.Aggregation;
 import org.apache.skywalking.library.elasticsearch.requests.search.aggregation.BucketOrder;
 import org.apache.skywalking.library.elasticsearch.requests.search.aggregation.TermsAggregationBuilder;
 import org.apache.skywalking.library.elasticsearch.response.search.SearchHit;
 import org.apache.skywalking.library.elasticsearch.response.search.SearchResponse;
-import org.apache.skywalking.oap.server.core.analysis.TimeBucket;
+import org.apache.skywalking.oap.server.core.query.input.Duration;
 import org.apache.skywalking.oap.server.core.storage.query.IZipkinQueryDAO;
 import org.apache.skywalking.oap.server.core.zipkin.ZipkinServiceRelationTraffic;
 import org.apache.skywalking.oap.server.core.zipkin.ZipkinServiceSpanTraffic;
 import org.apache.skywalking.oap.server.core.zipkin.ZipkinServiceTraffic;
 import org.apache.skywalking.oap.server.core.zipkin.ZipkinSpanRecord;
 import org.apache.skywalking.oap.server.library.client.elasticsearch.ElasticSearchClient;
+import org.apache.skywalking.oap.server.library.client.elasticsearch.ElasticSearchScroller;
 import org.apache.skywalking.oap.server.library.util.CollectionUtils;
 import org.apache.skywalking.oap.server.library.util.StringUtil;
 import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.ElasticSearchConverter;
 import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.EsDAO;
 import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.IndexController;
-import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.TimeRangeIndexNameGenerator;
-import zipkin2.Endpoint;
+import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.IndexFamily;
+import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.IndexNames;
+import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.RoutingUtils;
 import zipkin2.Span;
 import zipkin2.storage.QueryRequest;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 public class ZipkinQueryEsDAO extends EsDAO implements IZipkinQueryDAO {
     private final static int NAME_QUERY_MAX_SIZE = 10000;
@@ -66,34 +70,24 @@ public class ZipkinQueryEsDAO extends EsDAO implements IZipkinQueryDAO {
         final String index =
             IndexController.LogicIndicesRegister.getPhysicalTableName(ZipkinServiceTraffic.INDEX_NAME);
         final BoolQueryBuilder query = Query.bool();
-        if (IndexController.LogicIndicesRegister.isPhysicalTable(ZipkinServiceTraffic.INDEX_NAME)) {
+        if (IndexController.LogicIndicesRegister.isMergedTable(ZipkinServiceTraffic.INDEX_NAME)) {
             query.must(Query.term(IndexController.LogicIndicesRegister.METRIC_TABLE_NAME, ZipkinServiceTraffic.INDEX_NAME));
         }
         final SearchBuilder search = Search.builder().query(query).size(SCROLLING_BATCH_SIZE);
-        final SearchParams params = new SearchParams().scroll(SCROLL_CONTEXT_RETENTION);
-        final List<String> services = new ArrayList<>();
 
-        SearchResponse response = getClient().search(index, search.build(), params);
-        final Set<String> scrollIds = new HashSet<>();
-        try {
-            while (response.getHits().getHits().size() != 0) {
-                String scrollId = response.getScrollId();
-                scrollIds.add(scrollId);
-                for (SearchHit searchHit : response.getHits()) {
-                    Map<String, Object> sourceAsMap = searchHit.getSource();
-                    ZipkinServiceTraffic record = new ZipkinServiceTraffic.Builder().storage2Entity(
-                        new ElasticSearchConverter.ToEntity(ZipkinServiceTraffic.INDEX_NAME, sourceAsMap));
-                    services.add(record.getServiceName());
-                }
-                if (services.size() < SCROLLING_BATCH_SIZE) {
-                    break;
-                }
-                response = getClient().scroll(SCROLL_CONTEXT_RETENTION, scrollId);
-            }
-        } finally {
-            scrollIds.forEach(getClient()::deleteScrollContextQuietly);
-        }
-        return services;
+        final var scroller = ElasticSearchScroller
+            .<String>builder()
+            .client(getClient())
+            .search(search.build())
+            .index(index)
+            .resultConverter(hit -> {
+                final var sourceAsMap = hit.getSource();
+                final var record = new ZipkinServiceTraffic.Builder().storage2Entity(
+                    new ElasticSearchConverter.ToEntity(ZipkinServiceTraffic.INDEX_NAME, sourceAsMap));
+                return record.getServiceName();
+            })
+            .build();
+        return scroller.scroll();
     }
 
     @Override
@@ -101,7 +95,7 @@ public class ZipkinQueryEsDAO extends EsDAO implements IZipkinQueryDAO {
         String index = IndexController.LogicIndicesRegister.getPhysicalTableName(
             ZipkinServiceRelationTraffic.INDEX_NAME);
         BoolQueryBuilder query = Query.bool().must(Query.term(ZipkinServiceRelationTraffic.SERVICE_NAME, serviceName));
-        if (IndexController.LogicIndicesRegister.isPhysicalTable(ZipkinServiceRelationTraffic.INDEX_NAME)) {
+        if (IndexController.LogicIndicesRegister.isMergedTable(ZipkinServiceRelationTraffic.INDEX_NAME)) {
             query.must(Query.term(IndexController.LogicIndicesRegister.METRIC_TABLE_NAME, ZipkinServiceRelationTraffic.INDEX_NAME));
         }
         SearchBuilder search = Search.builder().query(query).size(NAME_QUERY_MAX_SIZE);
@@ -120,7 +114,7 @@ public class ZipkinQueryEsDAO extends EsDAO implements IZipkinQueryDAO {
     public List<String> getSpanNames(final String serviceName) {
         String index = IndexController.LogicIndicesRegister.getPhysicalTableName(ZipkinServiceSpanTraffic.INDEX_NAME);
         BoolQueryBuilder query = Query.bool().must(Query.term(ZipkinServiceSpanTraffic.SERVICE_NAME, serviceName));
-        if (IndexController.LogicIndicesRegister.isPhysicalTable(ZipkinServiceSpanTraffic.INDEX_NAME)) {
+        if (IndexController.LogicIndicesRegister.isMergedTable(ZipkinServiceSpanTraffic.INDEX_NAME)) {
             query.must(Query.term(IndexController.LogicIndicesRegister.METRIC_TABLE_NAME, ZipkinServiceSpanTraffic.INDEX_NAME));
         }
         SearchBuilder search = Search.builder().query(query).size(NAME_QUERY_MAX_SIZE);
@@ -136,39 +130,33 @@ public class ZipkinQueryEsDAO extends EsDAO implements IZipkinQueryDAO {
     }
 
     @Override
-    public List<Span> getTrace(final String traceId) {
+    public List<Span> getTrace(final String traceId, @Nullable final  Duration duration) {
         String index = IndexController.LogicIndicesRegister.getPhysicalTableName(ZipkinSpanRecord.INDEX_NAME);
         BoolQueryBuilder query = Query.bool().must(Query.term(ZipkinSpanRecord.TRACE_ID, traceId));
         SearchBuilder search = Search.builder().query(query).size(SCROLLING_BATCH_SIZE);
-        final SearchParams params = new SearchParams().scroll(SCROLL_CONTEXT_RETENTION);
-        SearchResponse response = getClient().search(index, search.build(), params);
-        final Set<String> scrollIds = new HashSet<>();
-        List<Span> trace = new ArrayList<>();
-        try {
-            while (response.getHits().getHits().size() != 0) {
-                String scrollId = response.getScrollId();
-                scrollIds.add(scrollId);
-                for (SearchHit searchHit : response.getHits()) {
-                    Map<String, Object> sourceAsMap = searchHit.getSource();
-                    ZipkinSpanRecord record = new ZipkinSpanRecord.Builder().storage2Entity(
-                        new ElasticSearchConverter.ToEntity(ZipkinSpanRecord.INDEX_NAME, sourceAsMap));
-                    trace.add(buildSpanFromRecord(record));
-                }
-                if (response.getHits().getHits().size() < SCROLLING_BATCH_SIZE) {
-                    break;
-                }
-                response = getClient().scroll(SCROLL_CONTEXT_RETENTION, scrollId);
-            }
-        } finally {
-            scrollIds.forEach(getClient()::deleteScrollContextQuietly);
-        }
-        return trace;
+        final var params = new SearchParams();
+        RoutingUtils.addRoutingValueToSearchParam(params, traceId);
+
+        final var scroller = ElasticSearchScroller
+            .<Span>builder()
+            .client(getClient())
+            .search(search.build())
+            .index(index)
+            .params(params)
+            .resultConverter(searchHit -> {
+                final var sourceAsMap = searchHit.getSource();
+                final var record = new ZipkinSpanRecord.Builder().storage2Entity(
+                    new ElasticSearchConverter.ToEntity(ZipkinSpanRecord.INDEX_NAME, sourceAsMap));
+                return ZipkinSpanRecord.buildSpanFromRecord(record);
+            })
+            .build();
+        return scrollDebuggable(scroller, index, params);
     }
 
     @Override
-    public List<List<Span>> getTraces(final QueryRequest request) {
-        final long startTimeMillis = request.endTs() - request.lookback();
-        final long endTimeMillis = request.endTs();
+    public List<List<Span>> getTraces(final QueryRequest request, Duration duration) {
+        final long startTimeMillis = duration.getStartTimestamp();
+        final long endTimeMillis = duration.getEndTimestamp();
         BoolQueryBuilder query = Query.bool();
         if (startTimeMillis > 0 && endTimeMillis > 0) {
             query.must(Query.range(ZipkinSpanRecord.TIMESTAMP_MILLIS)
@@ -213,30 +201,35 @@ public class ZipkinQueryEsDAO extends EsDAO implements IZipkinQueryDAO {
                        .order(BucketOrder.aggregation(ZipkinSpanRecord.TIMESTAMP_MILLIS, false));
 
         SearchBuilder search = Search.builder().query(query).aggregation(traceIdAggregation);
-        SearchResponse traceIdResponse = getClient().search(new TimeRangeIndexNameGenerator(
-            IndexController.LogicIndicesRegister.getPhysicalTableName(ZipkinSpanRecord.INDEX_NAME),
-            TimeBucket.getRecordTimeBucket(startTimeMillis),
-            TimeBucket.getRecordTimeBucket(endTimeMillis)
-        ), search.build());
-        final Map<String, Object> idTerms =
-            (Map<String, Object>) traceIdResponse.getAggregations().get(ZipkinSpanRecord.TRACE_ID);
-        final List<Map<String, Object>> buckets =
-            (List<Map<String, Object>>) idTerms.get("buckets");
-
+        // Day indices are listed only for the range the time filter above uses. A lookback that reaches back
+        // to 1970 would otherwise list one index per day since then.
+        final String[] indices = startTimeMillis > 0 && endTimeMillis > 0
+            ? IndexNames.rangeIndicesBetweenTimestamps(
+                IndexFamily.of(ZipkinSpanRecord.INDEX_NAME), startTimeMillis, endTimeMillis)
+            : new String[] {IndexController.LogicIndicesRegister.getPhysicalTableName(ZipkinSpanRecord.INDEX_NAME)};
+        SearchResponse traceIdResponse = searchDebuggable(indices, search.build());
         Set<String> traceIds = new HashSet<>();
-        for (Map<String, Object> idBucket : buckets) {
-            traceIds.add((String) idBucket.get("key"));
-        }
+        if (Objects.nonNull(traceIdResponse.getAggregations())) {
+            final Map<String, Object> idTerms =
+                (Map<String, Object>) traceIdResponse.getAggregations().get(ZipkinSpanRecord.TRACE_ID);
+            final List<Map<String, Object>> buckets =
+                (List<Map<String, Object>>) idTerms.get("buckets");
 
-        return getTraces(traceIds);
+            for (Map<String, Object> idBucket : buckets) {
+                traceIds.add((String) idBucket.get("key"));
+            }
+        }
+        return getTraces(traceIds, duration);
     }
 
     @Override
-    public List<List<Span>> getTraces(final Set<String> traceIds) {
+    public List<List<Span>> getTraces(final Set<String> traceIds, @Nullable final Duration duration) {
         String index = IndexController.LogicIndicesRegister.getPhysicalTableName(ZipkinSpanRecord.INDEX_NAME);
         BoolQueryBuilder query = Query.bool().must(Query.terms(ZipkinSpanRecord.TRACE_ID, new ArrayList<>(traceIds)));
-        SearchBuilder search = Search.builder().query(query).size(SCROLLING_BATCH_SIZE); //max span size for 1 scroll
+        SearchBuilder search = Search.builder().query(query).sort(ZipkinSpanRecord.TIMESTAMP_MILLIS, Sort.Order.DESC)
+                                     .size(SCROLLING_BATCH_SIZE); //max span size for 1 scroll
         final SearchParams params = new SearchParams().scroll(SCROLL_CONTEXT_RETENTION);
+        RoutingUtils.addRoutingValuesToSearchParam(params, traceIds);
 
         SearchResponse response = getClient().search(index, search.build(), params);
         final Set<String> scrollIds = new HashSet<>();
@@ -262,57 +255,10 @@ public class ZipkinQueryEsDAO extends EsDAO implements IZipkinQueryDAO {
             Map<String, Object> sourceAsMap = searchHit.getSource();
             ZipkinSpanRecord record = new ZipkinSpanRecord.Builder().storage2Entity(
                 new ElasticSearchConverter.ToEntity(ZipkinSpanRecord.INDEX_NAME, sourceAsMap));
-            Span span = buildSpanFromRecord(record);
+            Span span = ZipkinSpanRecord.buildSpanFromRecord(record);
             String traceId = span.traceId();
             groupedByTraceId.putIfAbsent(traceId, new ArrayList<>());
             groupedByTraceId.get(traceId).add(span);
         }
-    }
-
-    private Span buildSpanFromRecord(ZipkinSpanRecord record) {
-        Span.Builder span = Span.newBuilder();
-        span.traceId(record.getTraceId());
-        span.id(record.getSpanId());
-        span.parentId(record.getParentId());
-        span.kind(Span.Kind.valueOf(record.getKind()));
-        span.timestamp(record.getTimestamp());
-        span.duration(record.getDuration());
-        span.name(record.getName());
-        //Build localEndpoint
-        Endpoint.Builder localEndpoint = Endpoint.newBuilder();
-        localEndpoint.serviceName(record.getLocalEndpointServiceName());
-        if (!StringUtil.isEmpty(record.getLocalEndpointIPV4())) {
-            localEndpoint.parseIp(record.getLocalEndpointIPV4());
-        } else {
-            localEndpoint.parseIp(record.getLocalEndpointIPV6());
-        }
-        localEndpoint.port(record.getLocalEndpointPort());
-        span.localEndpoint(localEndpoint.build());
-        //Build remoteEndpoint
-        Endpoint.Builder remoteEndpoint = Endpoint.newBuilder();
-        remoteEndpoint.serviceName(record.getRemoteEndpointServiceName());
-        if (!StringUtil.isEmpty(record.getLocalEndpointIPV4())) {
-            remoteEndpoint.parseIp(record.getRemoteEndpointIPV4());
-        } else {
-            remoteEndpoint.parseIp(record.getRemoteEndpointIPV6());
-        }
-        remoteEndpoint.port(record.getRemoteEndpointPort());
-        span.remoteEndpoint(remoteEndpoint.build());
-
-        //Build tags
-        JsonObject tagsJson = record.getTags();
-        if (tagsJson != null) {
-            for (Map.Entry<String, JsonElement> tag : tagsJson.entrySet()) {
-                span.putTag(tag.getKey(), tag.getValue().getAsString());
-            }
-        }
-        //Build annotation
-        JsonObject annotationJson = record.getAnnotations();
-        if (annotationJson != null) {
-            for (Map.Entry<String, JsonElement> annotation : annotationJson.entrySet()) {
-                span.addAnnotation(Long.parseLong(annotation.getKey()), annotation.getValue().getAsString());
-            }
-        }
-        return span.build();
     }
 }

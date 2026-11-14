@@ -20,6 +20,8 @@ package org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.Optional;
+
 import org.apache.skywalking.oap.server.core.analysis.record.Record;
 import org.apache.skywalking.oap.server.core.storage.IRecordDAO;
 import org.apache.skywalking.oap.server.core.storage.model.Model;
@@ -41,8 +43,9 @@ public class RecordEsDAO extends EsDAO implements IRecordDAO {
         final ElasticSearchConverter.ToStorage toStorage = new ElasticSearchConverter.ToStorage(model.getName());
         storageBuilder.entity2Storage(record, toStorage);
         Map<String, Object> builder = IndexController.INSTANCE.appendTableColumn(model, toStorage.obtain());
-        String modelName = TimeSeriesUtils.writeIndexName(model, record.getTimeBucket());
-        String id = IndexController.INSTANCE.generateDocId(model, record.id());
-        return getClient().prepareInsert(modelName, id, builder);
+        String modelName = IndexNames.writeIndex(model, record.getTimeBucket());
+        String id = IndexController.INSTANCE.generateDocId(model, record.id().build());
+        Optional<String> routingValue = RoutingUtils.getRoutingValue(model, toStorage);
+        return getClient().prepareInsert(modelName, id, routingValue, builder);
     }
 }

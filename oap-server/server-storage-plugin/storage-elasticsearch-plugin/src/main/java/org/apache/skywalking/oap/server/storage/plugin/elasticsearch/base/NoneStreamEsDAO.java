@@ -44,8 +44,8 @@ public class NoneStreamEsDAO extends EsDAO implements INoneStreamDAO {
         storageBuilder.entity2Storage(noneStream, toStorage);
         Map<String, Object> builder =
             IndexController.INSTANCE.appendTableColumn(model, toStorage.obtain());
-        String modelName = TimeSeriesUtils.writeIndexName(model, noneStream.getTimeBucket());
-        String id = IndexController.INSTANCE.generateDocId(model, noneStream.id());
+        String modelName = IndexNames.writeIndex(model, noneStream.getTimeBucket());
+        String id = IndexController.INSTANCE.generateDocId(model, noneStream.id().build());
         getClient().forceInsert(modelName, id, builder);
     }
 }

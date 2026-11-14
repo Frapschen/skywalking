@@ -19,22 +19,33 @@
 package org.apache.skywalking.oap.server.storage.plugin.banyandb.measure;
 
 import com.google.common.collect.ImmutableSet;
-import org.apache.skywalking.banyandb.v1.client.DataPoint;
-import org.apache.skywalking.banyandb.v1.client.MeasureQuery;
-import org.apache.skywalking.banyandb.v1.client.MeasureQueryResponse;
-import org.apache.skywalking.banyandb.v1.client.TimestampRange;
+import org.apache.skywalking.library.banyandb.v1.client.DataPoint;
+import org.apache.skywalking.library.banyandb.v1.client.MeasureQueryResponse;
+import org.apache.skywalking.library.banyandb.v1.client.TimestampRange;
+import org.apache.skywalking.oap.server.core.analysis.DownSampling;
 import org.apache.skywalking.oap.server.core.analysis.TimeBucket;
 import org.apache.skywalking.oap.server.core.analysis.manual.searchtag.TagAutocompleteData;
 import org.apache.skywalking.oap.server.core.analysis.manual.searchtag.TagType;
+import org.apache.skywalking.oap.server.core.query.input.Duration;
 import org.apache.skywalking.oap.server.core.storage.query.ITagAutoCompleteQueryDAO;
 import org.apache.skywalking.oap.server.storage.plugin.banyandb.BanyanDBStorageClient;
+import org.apache.skywalking.oap.server.storage.plugin.banyandb.MetadataRegistry;
 import org.apache.skywalking.oap.server.storage.plugin.banyandb.stream.AbstractBanyanDBDAO;
+import org.apache.skywalking.oap.server.storage.plugin.banyandb.stream.Conditions;
 
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
+import static java.util.Objects.nonNull;
+
+/**
+ * {@link Duration#isColdStage()} is deliberately ignored here. {@link TagAutocompleteData} is an index-mode
+ * measure, so it lives in the stage-less {@code metadata} group, and BanyanDB rejects a query that names a stage
+ * on a group without stages ("no stage found"). The UI's cold-stage mode stamps the flag on every duration,
+ * including the autocomplete ones, so honouring it would break tag suggestions whenever that mode is on.
+ */
 public class BanyanDBTagAutocompleteQueryDAO extends AbstractBanyanDBDAO implements ITagAutoCompleteQueryDAO {
     private static final Set<String> TAGS_KEY = ImmutableSet.of(TagAutocompleteData.TAG_TYPE,
             TagAutocompleteData.TAG_KEY);
@@ -47,23 +58,29 @@ public class BanyanDBTagAutocompleteQueryDAO extends AbstractBanyanDBDAO impleme
     }
 
     @Override
-    public Set<String> queryTagAutocompleteKeys(TagType tagType, int limit, long startSecondTB, long endSecondTB) throws IOException {
-        TimestampRange range = null;
-        if (startSecondTB > 0 && endSecondTB > 0) {
-            range = new TimestampRange(TimeBucket.getTimestamp(startSecondTB), TimeBucket.getTimestamp(endSecondTB));
+    public Set<String> queryTagAutocompleteKeys(TagType tagType, int limit, Duration duration) throws IOException {
+        MetadataRegistry.Schema schema = MetadataRegistry.INSTANCE.findMetricMetadata(TagAutocompleteData.INDEX_NAME, DownSampling.Minute);
+        long startMinTB = 0;
+        long endMinTB = 0;
+        if (nonNull(duration)) {
+            startMinTB = duration.getStartTimeBucketInMin();
+            endMinTB = duration.getEndTimeBucketInMin();
         }
-        MeasureQueryResponse resp = query(TagAutocompleteData.INDEX_NAME,
-                TAGS_KEY, Collections.emptySet(),
-                range,
-                new QueryBuilder<MeasureQuery>() {
-                    @Override
-                    protected void apply(MeasureQuery query) {
-                        query.groupBy(ImmutableSet.of(TagAutocompleteData.TAG_KEY));
-                        query.setLimit(limit);
-                        query.and(eq(TagAutocompleteData.TAG_TYPE, tagType.name()));
-                    }
-                }
-        );
+
+        long startTB = TimeBucket.retainToDay4MinuteBucket(startMinTB);
+        long endTB = TimeBucket.retainToDayLastMin4MinuteBucket(endMinTB);
+
+        TimestampRange range = null;
+        if (startTB > 0 && endTB > 0) {
+            range = new TimestampRange(TimeBucket.getTimestamp(startTB), TimeBucket.getTimestamp(endTB));
+        }
+        MeasureQueryResponse resp = queryDebuggable(false, schema,
+                                          TAGS_KEY, Collections.emptySet(),
+                                          range,
+                                          Conditions.create()
+                                                  .eq(TagAutocompleteData.TAG_TYPE, tagType.name())
+                                                  .groupBy(TagAutocompleteData.TAG_KEY)
+                                                  .limit(limit));
 
         if (resp.size() == 0) {
             return Collections.emptySet();
@@ -77,24 +94,30 @@ public class BanyanDBTagAutocompleteQueryDAO extends AbstractBanyanDBDAO impleme
     }
 
     @Override
-    public Set<String> queryTagAutocompleteValues(TagType tagType, String tagKey, int limit, long startSecondTB, long endSecondTB) throws IOException {
-        TimestampRange range = null;
-        if (startSecondTB > 0 && endSecondTB > 0) {
-            range = new TimestampRange(TimeBucket.getTimestamp(startSecondTB), TimeBucket.getTimestamp(endSecondTB));
+    public Set<String> queryTagAutocompleteValues(TagType tagType, String tagKey, int limit, Duration duration) throws IOException {
+        MetadataRegistry.Schema schema = MetadataRegistry.INSTANCE.findMetricMetadata(TagAutocompleteData.INDEX_NAME, DownSampling.Minute);
+        long startMinTB = 0;
+        long endMinTB = 0;
+        if (nonNull(duration)) {
+            startMinTB = duration.getStartTimeBucketInMin();
+            endMinTB = duration.getEndTimeBucketInMin();
         }
-        MeasureQueryResponse resp = query(TagAutocompleteData.INDEX_NAME,
-                TAGS_KV, Collections.emptySet(),
-                range,
-                new QueryBuilder<MeasureQuery>() {
-                    @Override
-                    protected void apply(MeasureQuery query) {
-                        query.groupBy(ImmutableSet.of(TagAutocompleteData.TAG_VALUE));
-                        query.setLimit(limit);
-                        query.and(eq(TagAutocompleteData.TAG_TYPE, tagType.name()));
-                        query.and(eq(TagAutocompleteData.TAG_KEY, tagKey));
-                    }
-                }
-        );
+
+        long startTB = TimeBucket.retainToDay4MinuteBucket(startMinTB);
+        long endTB = TimeBucket.retainToDayLastMin4MinuteBucket(endMinTB);
+
+        TimestampRange range = null;
+        if (startTB > 0 && endTB > 0) {
+            range = new TimestampRange(TimeBucket.getTimestamp(startTB), TimeBucket.getTimestamp(endTB));
+        }
+        MeasureQueryResponse resp = queryDebuggable(false, schema,
+                                          TAGS_KV, Collections.emptySet(),
+                                          range,
+                                          Conditions.create()
+                                                  .eq(TagAutocompleteData.TAG_TYPE, tagType.name())
+                                                  .eq(TagAutocompleteData.TAG_KEY, tagKey)
+                                                  .groupBy(TagAutocompleteData.TAG_VALUE)
+                                                  .limit(limit));
 
         if (resp.size() == 0) {
             return Collections.emptySet();

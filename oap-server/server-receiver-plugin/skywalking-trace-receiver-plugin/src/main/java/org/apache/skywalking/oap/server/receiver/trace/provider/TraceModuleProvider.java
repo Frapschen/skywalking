@@ -25,16 +25,17 @@ import org.apache.skywalking.oap.server.configuration.api.ConfigurationModule;
 import org.apache.skywalking.oap.server.core.CoreModule;
 import org.apache.skywalking.oap.server.core.server.GRPCHandlerRegister;
 import org.apache.skywalking.oap.server.core.server.HTTPHandlerRegister;
-import org.apache.skywalking.oap.server.library.module.ModuleConfig;
 import org.apache.skywalking.oap.server.library.module.ModuleDefine;
 import org.apache.skywalking.oap.server.library.module.ModuleProvider;
 import org.apache.skywalking.oap.server.library.module.ServiceNotProvidedException;
 import org.apache.skywalking.oap.server.receiver.sharing.server.SharingServerModule;
 import org.apache.skywalking.oap.server.receiver.trace.module.TraceModule;
+import org.apache.skywalking.oap.server.receiver.trace.provider.handler.v8.grpc.SpanAttachedEventReportServiceHandler;
 import org.apache.skywalking.oap.server.receiver.trace.provider.handler.v8.grpc.TraceSegmentReportServiceHandler;
 import org.apache.skywalking.oap.server.receiver.trace.provider.handler.v8.grpc.TraceSegmentReportServiceHandlerCompat;
 import org.apache.skywalking.oap.server.receiver.trace.provider.handler.v8.rest.TraceSegmentReportHandler;
 import org.apache.skywalking.oap.server.telemetry.TelemetryModule;
+import org.apache.skywalking.oap.trace.analyzer.v2.module.TraceAnalyzerModule;
 
 public class TraceModuleProvider extends ModuleProvider {
 
@@ -49,7 +50,7 @@ public class TraceModuleProvider extends ModuleProvider {
     }
 
     @Override
-    public ModuleConfig createConfigBeanIfAbsent() {
+    public ConfigCreator newConfigCreator() {
         return null;
     }
 
@@ -70,6 +71,7 @@ public class TraceModuleProvider extends ModuleProvider {
         TraceSegmentReportServiceHandler traceSegmentReportServiceHandler = new TraceSegmentReportServiceHandler(getManager());
         grpcHandlerRegister.addHandler(traceSegmentReportServiceHandler);
         grpcHandlerRegister.addHandler(new TraceSegmentReportServiceHandlerCompat(traceSegmentReportServiceHandler));
+        grpcHandlerRegister.addHandler(new SpanAttachedEventReportServiceHandler(getManager()));
 
         httpHandlerRegister.addHandler(new TraceSegmentReportHandler(getManager()),
                                        Collections.singletonList(HttpMethod.POST)
@@ -87,6 +89,7 @@ public class TraceModuleProvider extends ModuleProvider {
             TelemetryModule.NAME,
             CoreModule.NAME,
             AnalyzerModule.NAME,
+            TraceAnalyzerModule.NAME,
             SharingServerModule.NAME,
             ConfigurationModule.NAME
         };

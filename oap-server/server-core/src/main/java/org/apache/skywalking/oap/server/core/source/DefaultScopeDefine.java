@@ -21,9 +21,11 @@ package org.apache.skywalking.oap.server.core.source;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import lombok.Setter;
 import org.apache.skywalking.oap.server.core.UnexpectedException;
 import org.apache.skywalking.oap.server.core.annotation.AnnotationListener;
@@ -32,6 +34,10 @@ public class DefaultScopeDefine {
     private static final Map<String, Integer> NAME_2_ID = new HashMap<>();
     private static final Map<Integer, String> ID_2_NAME = new HashMap<>();
     private static final Map<String, List<ScopeDefaultColumn>> SCOPE_COLUMNS = new HashMap<>();
+    /**
+     * Each scope's declaring class by its name, which TAL's {@code source <Name> {}} builds by name.
+     */
+    private static final Map<String, Class<?>> NAME_2_CLASS = new HashMap<>();
 
     /**
      * All metrics IDs in [0, 10,000) are reserved in Apache SkyWalking.
@@ -106,6 +112,67 @@ public class DefaultScopeDefine {
     public static final int ZIPKIN_SERVICE_SPAN = 52;
     public static final int ZIPKIN_SERVICE_RELATION = 53;
     public static final int PROCESS_RELATION = 54;
+    public static final int CACHE_ACCESS = 55;
+    public static final int CACHE_SLOW_ACCESS = 56;
+
+    public static final int TCP_SERVICE = 57;
+    public static final int TCP_SERVICE_INSTANCE = 58;
+    public static final int TCP_SERVICE_RELATION = 59;
+    public static final int TCP_SERVICE_INSTANCE_RELATION = 60;
+    public static final int TCP_SERVICE_INSTANCE_UPDATE = 61;
+    public static final int SAMPLED_SLOW_TRACE = 62;
+
+    public static final int MESSAGE_QUEUE_ACCESS = 63;
+    public static final int MESSAGE_QUEUE_ENDPOINT_ACCESS = 64;
+
+    public static final int SPAN_ATTACHED_EVENT = 65;
+    public static final int SAMPLED_STATUS_4XX_TRACE = 66;
+    public static final int SAMPLED_STATUS_5XX_TRACE = 67;
+
+    public static final int CONTINUOUS_PROFILING_POLICY = 68;
+
+    public static final int UI_MENU = 69;
+
+    public static final int SERVICE_HIERARCHY_RELATION = 70;
+    public static final int INSTANCE_HIERARCHY_RELATION = 71;
+
+    public static final int K8S_SERVICE = 72;
+    public static final int K8S_SERVICE_INSTANCE = 73;
+    public static final int K8S_SERVICE_RELATION = 74;
+    public static final int K8S_SERVICE_INSTANCE_RELATION = 75;
+    public static final int K8S_ENDPOINT = 76;
+
+    public static final int CILIUM_SERVICE = 78;
+    public static final int CILIUM_SERVICE_INSTANCE = 79;
+    public static final int CILIUM_SERVICE_RELATION = 80;
+    public static final int CILIUM_SERVICE_INSTANCE_RELATION = 81;
+    public static final int CILIUM_ENDPOINT = 82;
+    public static final int CILIUM_ENDPOINT_REALATION = 83;
+
+    public static final int JFR_PROFILING_DATA = 84;
+    public static final int ASYNC_PROFILER_TASK = 85;
+    public static final int ASYNC_PROFILER_TASK_LOG = 86;
+
+    public static final int BROWSER_APP_WEB_VITALS_PAGE_PERF = 87;
+    public static final int BROWSER_APP_RESOURCE_PERF = 88;
+    public static final int BROWSER_APP_WEB_INTERACTION_PAGE_PERF = 89;
+    public static final int SW_SPAN_ATTACHED_EVENT = 90;
+    public static final int SERVICE_DATABASE_SLOW_STATEMENT = 91;
+    public static final int PPROF_TASK = 92;
+    public static final int PPROF_PROFILING_DATA = 93;
+    public static final int PPROF_TASK_LOG = 94;
+    public static final int ALARM_RECOVERY = 95;
+    public static final int GEN_AI_PROVIDER_ACCESS = 96;
+    public static final int GEN_AI_MODEL_ACCESS = 97;
+    public static final int RUNTIME_RULE = 98;
+    public static final int GEN_AI_EVALUATION_RECORD = 99;
+    public static final int AI_AGENT_SESSION_DATA = 100;
+    public static final int AI_AGENT_SESSION_FLOW = 101;
+    public static final int OTLP_SPAN = 102;
+    public static final int OTLP_SERVICE = 103;
+    public static final int OTLP_SERVICE_SPAN = 104;
+    public static final int OTLP_SERVICE_RELATION = 105;
+    public static final int GEN_AI_EVALUATION_SAMPLE = 106;
 
     /**
      * Catalog of scope, the metrics processor could use this to group all generated metrics by oal rt.
@@ -159,7 +226,7 @@ public class DefaultScopeDefine {
      * @param declaration   includes the definition.
      * @param originalClass represents the class having the {@link ScopeDeclaration} annotation
      */
-    private static final void addNewScope(ScopeDeclaration declaration, Class originalClass) {
+    private static void addNewScope(ScopeDeclaration declaration, Class originalClass) {
         int id = declaration.id();
         if (ID_2_NAME.containsKey(id)) {
             throw new UnexpectedException(
@@ -179,6 +246,7 @@ public class DefaultScopeDefine {
 
         ID_2_NAME.put(id, name);
         NAME_2_ID.put(name, id);
+        NAME_2_CLASS.put(name, originalClass);
 
         List<ScopeDefaultColumn> scopeDefaultColumns = new ArrayList<>();
 
@@ -187,19 +255,25 @@ public class DefaultScopeDefine {
         if (virtualColumn != null) {
             scopeDefaultColumns.add(
                 new ScopeDefaultColumn(virtualColumn.fieldName(), virtualColumn.columnName(), virtualColumn
-                    .type(), virtualColumn.isID(), virtualColumn.length()));
+                    .type(), virtualColumn.isID(), virtualColumn.length(), -1, false));
         }
         Field[] scopeClassField = originalClass.getDeclaredFields();
         if (scopeClassField != null) {
             for (Field field : scopeClassField) {
                 ScopeDefaultColumn.DefinedByField definedByField = field.getAnnotation(
                     ScopeDefaultColumn.DefinedByField.class);
+                ScopeDefaultColumn.BanyanDB banyanDB = field.getAnnotation(
+                    ScopeDefaultColumn.BanyanDB.class);
+                int shardingKeyIdx = -1;
+                if (banyanDB != null) {
+                    shardingKeyIdx = banyanDB.shardingKeyIdx();
+                }
                 if (definedByField != null) {
                     if (!definedByField.requireDynamicActive() || ACTIVE_EXTRA_MODEL_COLUMNS) {
                         scopeDefaultColumns.add(
                             new ScopeDefaultColumn(
                                 field.getName(), definedByField.columnName(), field.getType(), false,
-                                definedByField.length()
+                                definedByField.length(), shardingKeyIdx, definedByField.isAttribute()
                             ));
                     }
                 }
@@ -272,6 +346,22 @@ public class DefaultScopeDefine {
         NAME_2_ID.clear();
         ID_2_NAME.clear();
         SCOPE_COLUMNS.clear();
+        NAME_2_CLASS.clear();
+    }
+
+    /**
+     * @param name a scope's name, as OAL's {@code from()} gives it
+     * @return the class declaring that scope, or null when no class declares it
+     */
+    public static Class<?> classOf(final String name) {
+        return NAME_2_CLASS.get(name);
+    }
+
+    /**
+     * @return the names of every declared scope
+     */
+    public static Set<String> names() {
+        return Collections.unmodifiableSet(NAME_2_CLASS.keySet());
     }
 
     /**

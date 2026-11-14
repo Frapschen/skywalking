@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version: '2.1'
-
 services:
   oap:
     extends:
@@ -23,11 +21,19 @@ services:
     ports:
       - 12800
 
+  banyandb:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: banyandb
+    ports:
+      - 17912
+
   provider:
     build:
       context: .
       dockerfile: Dockerfile.nodejs
       args:
+        - SW_AGENT_NODEJS_REPO=${SW_AGENT_NODEJS_REPO}
         - SW_AGENT_NODEJS_COMMIT=${SW_AGENT_NODEJS_COMMIT}
     networks:
       - e2e
@@ -65,6 +71,7 @@ services:
       context: .
       dockerfile: Dockerfile.nodejs
       args:
+        - SW_AGENT_NODEJS_REPO=${SW_AGENT_NODEJS_REPO}
         - SW_AGENT_NODEJS_COMMIT=${SW_AGENT_NODEJS_COMMIT}
     networks:
       - e2e

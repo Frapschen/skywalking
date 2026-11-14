@@ -18,19 +18,21 @@
 
 package org.apache.skywalking.oap.query.graphql.resolver;
 
+import com.google.protobuf.InvalidProtocolBufferException;
 import graphql.kickstart.tools.GraphQLQueryResolver;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.apache.skywalking.apm.network.logging.v3.LogData;
-import org.apache.skywalking.oap.log.analyzer.dsl.Binding;
-import org.apache.skywalking.oap.log.analyzer.dsl.DSL;
-import org.apache.skywalking.oap.log.analyzer.module.LogAnalyzerModule;
-import org.apache.skywalking.oap.log.analyzer.provider.LogAnalyzerModuleConfig;
-import org.apache.skywalking.oap.log.analyzer.provider.LogAnalyzerModuleProvider;
+import org.apache.skywalking.apm.network.logging.v3.LogTags;
+import org.apache.skywalking.oap.log.analyzer.v2.dsl.ExecutionContext;
+import org.apache.skywalking.oap.log.analyzer.v2.dsl.DSL;
+import org.apache.skywalking.oap.server.core.source.LogMetadataUtils;
+import org.apache.skywalking.oap.log.analyzer.v2.module.LogAnalyzerModule;
+import org.apache.skywalking.oap.log.analyzer.v2.provider.LogAnalyzerModuleConfig;
+import org.apache.skywalking.oap.log.analyzer.v2.provider.LogAnalyzerModuleProvider;
 import org.apache.skywalking.oap.query.graphql.GraphQLQueryConfig;
 import org.apache.skywalking.oap.query.graphql.type.LogTestRequest;
 import org.apache.skywalking.oap.query.graphql.type.LogTestResponse;
@@ -38,6 +40,8 @@ import org.apache.skywalking.oap.query.graphql.type.Metrics;
 import org.apache.skywalking.oap.server.core.analysis.IDManager;
 import org.apache.skywalking.oap.server.core.query.type.KeyValue;
 import org.apache.skywalking.oap.server.core.query.type.Log;
+import org.apache.skywalking.oap.server.core.source.LogBuilder;
+import org.apache.skywalking.oap.server.core.source.LogMetadata;
 import org.apache.skywalking.oap.server.library.module.ModuleManager;
 import org.apache.skywalking.oap.server.library.util.ProtoBufJsonUtils;
 
@@ -55,7 +59,7 @@ public class LogTestQuery implements GraphQLQueryResolver {
         if (!config.isEnableLogTestTool()) {
             throw new IllegalAccessException(
                 "LAL debug tool is not enabled. To enable, please set SW_QUERY_GRAPHQL_ENABLE_LOG_TEST_TOOL=true," +
-                    "for more details, refer to https://skywalking.apache.org/docs/main/latest/en/setup/backend/configuration-vocabulary/");
+                    "for more details, refer to https://skywalking.apache.org/docs/main/next/en/setup/backend/configuration-vocabulary/");
         }
 
         requireNonNull(request, "request");
@@ -65,31 +69,33 @@ public class LogTestQuery implements GraphQLQueryResolver {
         final LogAnalyzerModuleProvider provider =
             (LogAnalyzerModuleProvider) moduleManager.find(LogAnalyzerModule.NAME)
                                                      .provider();
-        final LogAnalyzerModuleConfig config =
-            (LogAnalyzerModuleConfig) provider.createConfigBeanIfAbsent();
+        final LogAnalyzerModuleConfig config = provider.getModuleConfig();
         final DSL dsl = DSL.of(moduleManager, config, request.getDsl());
-        final Binding binding = new Binding();
+        final ExecutionContext ctx = new ExecutionContext();
 
         final LogData.Builder log = LogData.newBuilder();
         ProtoBufJsonUtils.fromJSON(request.getLog(), log);
-        binding.log(log);
+        final LogMetadata metadata = LogMetadataUtils.fromLogData(log);
+        ctx.init(metadata, log);
 
-        binding.logContainer(new AtomicReference<>());
-        binding.metricsContainer(new ArrayList<>());
+        ctx.dryRun(true);
+        ctx.metricsContainer(new ArrayList<>());
 
-        dsl.bind(binding);
-        dsl.evaluate();
+        dsl.evaluate(ctx);
 
         final LogTestResponse.LogTestResponseBuilder builder = LogTestResponse.builder();
-        binding.logContainer().map(AtomicReference::get).ifPresent(it -> {
-            final Log l = new Log();
+        if (ctx.shouldSave() && ctx.outputAsBuilder() instanceof LogBuilder) {
+            final LogBuilder logBuilder = (LogBuilder) ctx.outputAsBuilder();
+            logBuilder.init(metadata, log, moduleManager);
+            final org.apache.skywalking.oap.server.core.source.Log it = logBuilder.toLog();
 
+            final Log l = new Log();
             if (isNotBlank(it.getServiceId())) {
                 l.setServiceName(IDManager.ServiceID.analysisId(it.getServiceId()).getName());
             }
             l.setServiceId(it.getServiceId());
             if (isNotBlank(it.getServiceInstanceId())) {
-                String name = IDManager.ServiceInstanceID.analysisId(it.getServiceId()).getName();
+                String name = IDManager.ServiceInstanceID.analysisId(it.getServiceInstanceId()).getName();
                 l.setServiceInstanceName(name);
             }
             l.setServiceInstanceId(it.getServiceInstanceId());
@@ -102,15 +108,21 @@ public class LogTestQuery implements GraphQLQueryResolver {
             l.setTimestamp(it.getTimestamp());
             l.setContentType(it.getContentType());
             l.setContent(it.getContent());
-            final List<KeyValue> tags = it.getTags()
-                                          .stream()
-                                          .map(tag -> new KeyValue(tag.getKey(), tag.getValue()))
-                                          .collect(Collectors.toList());
-            l.getTags().addAll(tags);
-
+            if (it.getTagsRawData() != null) {
+                try {
+                    final List<KeyValue> tags = LogTags.parseFrom(it.getTagsRawData())
+                                                       .getDataList()
+                                                       .stream()
+                                                       .map(tag -> new KeyValue(tag.getKey(), tag.getValue()))
+                                                       .collect(Collectors.toList());
+                    l.getTags().addAll(tags);
+                } catch (InvalidProtocolBufferException e) {
+                    // ignore
+                }
+            }
             builder.log(l);
-        });
-        binding.metricsContainer().ifPresent(it -> {
+        }
+        ctx.metricsContainer().ifPresent(it -> {
             final List<Metrics> samples =
                 it.stream()
                   .flatMap(s -> Arrays.stream(s.samples))

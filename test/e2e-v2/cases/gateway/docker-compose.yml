@@ -13,11 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version: '2.1'
-
 services:
   zk:
-    image: zookeeper:3.5
+    image: zookeeper:3.9
     expose:
       - 2181
     networks:
@@ -28,20 +26,10 @@ services:
       timeout: 60s
       retries: 120
 
-  es:
-    image: elastic/elasticsearch:6.3.2
-    expose:
-      - 9200
-    networks:
-      - e2e
-    environment:
-      - discovery.type=single-node
-      - cluster.routing.allocation.disk.threshold_enabled=false
-    healthcheck:
-      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9200"]
-      interval: 5s
-      timeout: 60s
-      retries: 120
+  banyandb:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: banyandb
 
   oap1:
     extends:
@@ -49,13 +37,12 @@ services:
       service: oap
     environment:
       SW_CLUSTER: zookeeper
-      SW_STORAGE: elasticsearch
     volumes:
       - ./gateways.yml:/skywalking/config/gateways.yml
     depends_on:
       zk:
         condition: service_healthy
-      es:
+      banyandb:
         condition: service_healthy
 
   oap2:
@@ -64,30 +51,33 @@ services:
       service: oap
     environment:
       SW_CLUSTER: zookeeper
-      SW_STORAGE: elasticsearch
     volumes:
       - ./gateways.yml:/skywalking/config/gateways.yml
     depends_on:
       zk:
         condition: service_healthy
-      es:
+      banyandb:
         condition: service_healthy
       oap1:
         condition: service_healthy
 
-  ui:
-    extends:
-      file: ../../script/docker-compose/base-compose.yml
-      service: ui
-    environment:
-      - SW_OAP_ADDRESS=http://oap1:12800,http://oap2:12800
+  # TCP LB on 12800 so the e2e addresses the clustered OAP through a
+  # single `${oap_host}:${oap_12800}` rather than per-node oap1/oap2 host
+  # mappings — use `ports:` (not `expose:`) so infra-e2e gets the
+  # host-side port assignment.
+  oap:
+    image: nginx:${SW_NGINX_VERSION}
+    networks:
+      - e2e
+    ports:
+      - 12800
+    volumes:
+      - ../../script/docker-compose/oap-lb.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       oap1:
         condition: service_healthy
       oap2:
         condition: service_healthy
-    ports:
-      - 8080
 
   provider1:
     extends:

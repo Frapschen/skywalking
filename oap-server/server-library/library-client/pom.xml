@@ -21,7 +21,7 @@
     <parent>
         <artifactId>server-library</artifactId>
         <groupId>org.apache.skywalking</groupId>
-        <version>9.2.0-SNAPSHOT</version>
+        <version>${revision}</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -38,10 +38,14 @@
             <artifactId>library-util</artifactId>
             <version>${project.version}</version>
         </dependency>
-
         <dependency>
             <groupId>org.apache.skywalking</groupId>
             <artifactId>library-elasticsearch-client</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.skywalking</groupId>
+            <artifactId>telemetry-api</artifactId>
             <version>${project.version}</version>
         </dependency>
 
@@ -52,6 +56,10 @@
         <dependency>
             <groupId>io.grpc</groupId>
             <artifactId>grpc-netty</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-services</artifactId>
         </dependency>
         <dependency>
             <groupId>io.netty</groupId>
@@ -81,6 +89,12 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>elasticsearch</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.skywalking</groupId>
+            <artifactId>server-testing</artifactId>
+            <version>${project.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

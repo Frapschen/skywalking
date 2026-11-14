@@ -18,8 +18,9 @@
 
 package org.apache.skywalking.oap.server.core.source;
 
+import com.google.common.base.Charsets;
 import com.google.common.hash.Hashing;
-import com.linecorp.armeria.internal.shaded.guava.base.Charsets;
+import com.google.gson.JsonObject;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -41,8 +42,8 @@ public class EBPFProcessProfilingSchedule extends Source {
     public String getEntityId() {
         if (entityId == null) {
             entityId = Hashing.sha256().newHasher()
-                    .putString(String.format("%s_%s_%d", taskId, processId, startTime), Charsets.UTF_8)
-                    .hash().toString();
+                              .putString(String.format("%s_%s_%d", taskId, processId, startTime), Charsets.UTF_8)
+                              .hash().toString();
         }
         return entityId;
     }
@@ -51,4 +52,17 @@ public class EBPFProcessProfilingSchedule extends Source {
     private String taskId;
     private long startTime;
     private long currentTime;
+
+    @Override
+    public String toJson() {
+        final JsonObject obj = new JsonObject();
+        obj.addProperty("scope", scope());
+        obj.addProperty("entityId", getEntityId());
+        obj.addProperty("timeBucket", getTimeBucket());
+        obj.addProperty("processId", processId);
+        obj.addProperty("taskId", taskId);
+        obj.addProperty("startTime", startTime);
+        obj.addProperty("currentTime", currentTime);
+        return obj.toString();
+    }
 }

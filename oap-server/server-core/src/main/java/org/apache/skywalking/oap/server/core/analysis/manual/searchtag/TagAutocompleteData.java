@@ -27,19 +27,26 @@ import org.apache.skywalking.oap.server.core.analysis.metrics.Metrics;
 import org.apache.skywalking.oap.server.core.analysis.worker.MetricsStreamProcessor;
 import org.apache.skywalking.oap.server.core.remote.grpc.proto.RemoteData;
 import org.apache.skywalking.oap.server.core.source.DefaultScopeDefine;
+import org.apache.skywalking.oap.server.core.storage.StorageID;
+import org.apache.skywalking.oap.server.core.storage.annotation.BanyanDB;
 import org.apache.skywalking.oap.server.core.storage.annotation.Column;
+import org.apache.skywalking.oap.server.core.storage.annotation.ElasticSearch;
 import org.apache.skywalking.oap.server.core.storage.type.Convert2Entity;
 import org.apache.skywalking.oap.server.core.storage.type.Convert2Storage;
 import org.apache.skywalking.oap.server.core.storage.type.StorageBuilder;
 
 @Stream(name = TagAutocompleteData.INDEX_NAME, scopeId = DefaultScopeDefine.TAG_AUTOCOMPLETE,
     builder = TagAutocompleteData.Builder.class, processor = MetricsStreamProcessor.class)
-@MetricsExtension(supportDownSampling = false, supportUpdate = false, timeRelativeID = true)
+// timeRelativeID=false at here doesn't mean the ID is completely irrelevant with time bucket.
+// TagAutocompleteData still uses the day(toTimeBucketInDay()) as ID prefix,
+// to make this tag tip feature doesn't host too large scale data.
+@MetricsExtension(supportDownSampling = false, supportUpdate = false, timeRelativeID = false)
 @EqualsAndHashCode(of = {
     "tagKey",
     "tagValue",
     "tagType"
-})
+}, callSuper = true)
+@BanyanDB.IndexMode
 public class TagAutocompleteData extends Metrics {
     public static final String INDEX_NAME = "tag_autocomplete";
     public static final String TAG_KEY = "tag_key";
@@ -48,16 +55,17 @@ public class TagAutocompleteData extends Metrics {
 
     @Setter
     @Getter
-    @Column(columnName = TAG_KEY)
+    @Column(name = TAG_KEY)
+    @ElasticSearch.EnableDocValues
     private String tagKey;
     @Setter
     @Getter
-    @Column(columnName = TAG_VALUE)
+    @Column(name = TAG_VALUE, length = Tag.TAG_LENGTH)
     private String tagValue;
 
     @Setter
     @Getter
-    @Column(columnName = TAG_TYPE)
+    @Column(name = TAG_TYPE)
     private String tagType;
 
     @Override
@@ -81,8 +89,12 @@ public class TagAutocompleteData extends Metrics {
     }
 
     @Override
-    protected String id0() {
-        return toTimeBucketInDay() + "-" + tagType + "-" + tagKey + "=" + tagValue;
+    protected StorageID id0() {
+        return new StorageID()
+            .append(toTimeBucketInDay())
+            .append(tagType)
+            .append(tagKey)
+            .append(tagValue);
     }
 
     @Override

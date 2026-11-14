@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version: '2.1'
-
 services:
   zookeeper:
     image: zookeeper:3.4
@@ -32,7 +30,7 @@ services:
       retries: 120
 
   broker-a:
-    image: bitnami/kafka:2.4.1
+    image: bitnamilegacy/kafka:2.4.1
     hostname: broker-a
     expose:
       - 9092
@@ -52,7 +50,7 @@ services:
       retries: 120
 
   broker-b:
-    image: bitnami/kafka:2.4.1
+    image: bitnamilegacy/kafka:2.4.1
     hostname: broker-b
     expose:
       - 9092
@@ -88,6 +86,13 @@ services:
     ports:
     - 12800
 
+  banyandb:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: banyandb
+    ports:
+      - 17912
+
   provider-py:
     build:
       context: .
@@ -100,7 +105,8 @@ services:
       - 9091
     environment:
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
-      SW_AGENT_INSTANCE: provider-py-instance
+      SW_AGENT_INSTANCE_NAME: provider-py-instance
+      SW_AGENT_NAME: provider-py
     depends_on:
       oap:
         condition: service_healthy
@@ -135,8 +141,9 @@ services:
       - 9089
     environment:
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
-      SW_AGENT_INSTANCE: provider-py-kafka-instance
+      SW_AGENT_INSTANCE_NAME: provider-py-kafka-instance
       SW_KAFKA_REPORTER_BOOTSTRAP_SERVERS: broker-a:9092,broker-b:9092
+      SW_AGENT_NAME: provider-py-kafka
     depends_on:
       oap:
         condition: service_healthy
@@ -146,8 +153,6 @@ services:
       timeout: 60s
       retries: 120
     entrypoint: ['python3', '/provider-kafka.py']
-
-
   consumer-py:
     build:
       context: .
@@ -161,7 +166,8 @@ services:
     environment:
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
       PROVIDER_URL: http://medium-java:9092/users
-      SW_AGENT_INSTANCE: consumer-py-instance
+      SW_AGENT_INSTANCE_NAME: consumer-py-instance
+      SW_AGENT_NAME: consumer-py
     depends_on:
       oap:
         condition: service_healthy

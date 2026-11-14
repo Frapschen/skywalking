@@ -19,22 +19,28 @@
 package org.apache.skywalking.oap.query.graphql.resolver;
 
 import graphql.kickstart.tools.GraphQLQueryResolver;
-import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import org.apache.skywalking.oap.query.graphql.type.TimeInfo;
 import org.apache.skywalking.oap.server.core.CoreModule;
 import org.apache.skywalking.oap.server.core.analysis.IDManager;
 import org.apache.skywalking.oap.server.core.query.MetadataQueryService;
+import org.apache.skywalking.oap.server.core.query.TTLStatusQuery;
 import org.apache.skywalking.oap.server.core.query.input.Duration;
+import org.apache.skywalking.oap.server.core.query.input.ServiceCondition;
 import org.apache.skywalking.oap.server.core.query.type.Endpoint;
 import org.apache.skywalking.oap.server.core.query.type.EndpointInfo;
 import org.apache.skywalking.oap.server.core.query.type.Process;
 import org.apache.skywalking.oap.server.core.query.type.Service;
 import org.apache.skywalking.oap.server.core.query.type.ServiceInstance;
+import org.apache.skywalking.oap.server.core.storage.ttl.MetricsTTL;
+import org.apache.skywalking.oap.server.core.storage.ttl.RecordsTTL;
 import org.apache.skywalking.oap.server.library.module.ModuleManager;
+
+import static org.apache.skywalking.oap.query.graphql.AsyncQueryUtils.queryAsync;
 
 /**
  * Metadata v2 query protocol implementation.
@@ -45,6 +51,7 @@ public class MetadataQueryV2 implements GraphQLQueryResolver {
 
     private final ModuleManager moduleManager;
     private MetadataQueryService metadataQueryService;
+    private TTLStatusQuery ttlStatusQuery;
 
     public MetadataQueryV2(ModuleManager moduleManager) {
         this.moduleManager = moduleManager;
@@ -59,51 +66,70 @@ public class MetadataQueryV2 implements GraphQLQueryResolver {
         return metadataQueryService;
     }
 
-    public Set<String> listLayers() throws IOException {
-        return getMetadataQueryService().listLayers();
+    private TTLStatusQuery getTTLStatusQuery() {
+        if (ttlStatusQuery == null) {
+            ttlStatusQuery = moduleManager.find(CoreModule.NAME)
+                                          .provider()
+                                          .getService(TTLStatusQuery.class);
+        }
+        return ttlStatusQuery;
     }
 
-    public List<Service> listServices(final String layer) throws IOException {
-        return getMetadataQueryService().listServices(layer, null);
+    public CompletableFuture<Set<String>> listLayers() {
+        return queryAsync(() -> getMetadataQueryService().listLayers());
     }
 
-    public Service findService(final String serviceName) throws IOException {
-        return getMetadataQueryService().getService(IDManager.ServiceID.buildId(serviceName, true));
+    public CompletableFuture<List<Service>> listServices(final String layer) {
+        return queryAsync(() -> getMetadataQueryService().listServices(layer, null));
     }
 
-    public Service getService(final String serviceId) throws IOException {
-        return getMetadataQueryService().getService(serviceId);
+    public CompletableFuture<Service> findService(final String serviceName) {
+        return queryAsync(() -> getMetadataQueryService().getService(IDManager.ServiceID.buildId(serviceName, true)));
     }
 
-    public List<ServiceInstance> listInstances(final Duration duration,
-                                               final String serviceId) throws IOException {
-        return getMetadataQueryService().listInstances(
-            duration.getStartTimestamp(), duration.getEndTimestamp(), serviceId);
+    public CompletableFuture<Service> getService(final String serviceId) {
+        return queryAsync(() -> getMetadataQueryService().getService(serviceId));
     }
 
-    public ServiceInstance getInstance(final String instanceId) throws IOException {
-        return getMetadataQueryService().getInstance(instanceId);
+    public CompletableFuture<List<ServiceInstance>> listInstances(final Duration duration,
+                                                                  final String serviceId) {
+        return queryAsync(() -> getMetadataQueryService().listInstances(duration, serviceId));
     }
 
-    public List<Endpoint> findEndpoint(final String keyword, final String serviceId,
-                                       final int limit) throws IOException {
-        return getMetadataQueryService().findEndpoint(keyword, serviceId, limit);
+    public CompletableFuture<List<ServiceInstance>> listInstancesByName(final Duration duration,
+                                                                        final ServiceCondition service) {
+        return queryAsync(() -> getMetadataQueryService().listInstances(duration, service.getServiceId()));
     }
 
-    public EndpointInfo getEndpointInfo(final String endpointId) throws IOException {
-        return getMetadataQueryService().getEndpointInfo(endpointId);
+    public CompletableFuture<ServiceInstance> getInstance(final String instanceId) {
+        return queryAsync(() -> getMetadataQueryService().getInstance(instanceId));
     }
 
-    public List<Process> listProcesses(final Duration duration, final String instanceId) throws IOException {
-        return getMetadataQueryService().listProcesses(duration, instanceId);
+    public CompletableFuture<List<Endpoint>> findEndpoint(final String keyword, final String serviceId,
+                                                          final int limit, final Duration duration) {
+        return queryAsync(() -> getMetadataQueryService().findEndpoint(keyword, serviceId, limit, duration));
     }
 
-    public Process getProcess(final String processId) throws IOException {
-        return getMetadataQueryService().getProcess(processId);
+    public CompletableFuture<List<Endpoint>> findEndpointByName(final String keyword, final ServiceCondition service,
+                                                                final int limit, final Duration duration) {
+        return queryAsync(
+            () -> getMetadataQueryService().findEndpoint(keyword, service.getServiceId(), limit, duration));
     }
 
-    public Long estimateProcessScale(String serviceId, List<String> labels) throws IOException {
-        return getMetadataQueryService().estimateProcessScale(serviceId, labels);
+    public CompletableFuture<EndpointInfo> getEndpointInfo(final String endpointId) {
+        return queryAsync(() -> getMetadataQueryService().getEndpointInfo(endpointId));
+    }
+
+    public CompletableFuture<List<Process>> listProcesses(final Duration duration, final String instanceId) {
+        return queryAsync(() -> getMetadataQueryService().listProcesses(duration, instanceId));
+    }
+
+    public CompletableFuture<Process> getProcess(final String processId) {
+        return queryAsync(() -> getMetadataQueryService().getProcess(processId));
+    }
+
+    public CompletableFuture<Long> estimateProcessScale(String serviceId, List<String> labels) {
+        return queryAsync(() -> getMetadataQueryService().estimateProcessScale(serviceId, labels));
     }
 
     public TimeInfo getTimeInfo() {
@@ -113,5 +139,13 @@ public class MetadataQueryV2 implements GraphQLQueryResolver {
         timeInfo.setCurrentTimestamp(date.getTime());
         timeInfo.setTimezone(timezoneFormat.format(date));
         return timeInfo;
+    }
+
+    public RecordsTTL getRecordsTTL() {
+        return getTTLStatusQuery().getTTL().getRecords();
+    }
+
+    public MetricsTTL getMetricsTTL() {
+        return getTTLStatusQuery().getTTL().getMetrics();
     }
 }

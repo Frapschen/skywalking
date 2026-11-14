@@ -13,8 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+debuggingtrace: null
 nodes:
-{{- contains .nodes }}
+{{- containsOnce (.nodes | noDuplicates) }}
 - id: {{ b64enc "User" }}.0_{{ b64enc "User" }}
   name: User
   serviceid: {{ b64enc "User" }}.0
@@ -35,7 +36,7 @@ nodes:
   isreal: true
 {{- end }}
 calls:
-{{- contains .calls }}
+{{- containsOnce (.calls | noDuplicates) }}
 - source: {{ b64enc "User" }}.0_{{ b64enc "User" }}
   sourcecomponents: []
   target: {{ b64enc "e2e-service-consumer" }}.1_{{ b64enc "POST:/users" }}

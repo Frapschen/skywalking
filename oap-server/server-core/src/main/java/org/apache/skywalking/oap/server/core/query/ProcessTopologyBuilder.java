@@ -23,11 +23,12 @@ import org.apache.skywalking.oap.server.core.CoreModule;
 import org.apache.skywalking.oap.server.core.analysis.IDManager;
 import org.apache.skywalking.oap.server.core.analysis.manual.process.ProcessDetectType;
 import org.apache.skywalking.oap.server.core.analysis.manual.process.ProcessTraffic;
-import org.apache.skywalking.oap.server.core.analysis.metrics.Metrics;
 import org.apache.skywalking.oap.server.core.config.IComponentLibraryCatalogService;
 import org.apache.skywalking.oap.server.core.query.type.Call;
 import org.apache.skywalking.oap.server.core.query.type.ProcessNode;
 import org.apache.skywalking.oap.server.core.query.type.ProcessTopology;
+import org.apache.skywalking.oap.server.core.query.type.debugging.DebuggingSpan;
+import org.apache.skywalking.oap.server.core.query.type.debugging.DebuggingTraceContext;
 import org.apache.skywalking.oap.server.core.source.DetectPoint;
 import org.apache.skywalking.oap.server.core.storage.IMetricsDAO;
 import org.apache.skywalking.oap.server.core.storage.StorageDAO;
@@ -35,8 +36,8 @@ import org.apache.skywalking.oap.server.core.storage.StorageModule;
 import org.apache.skywalking.oap.server.core.storage.model.Model;
 import org.apache.skywalking.oap.server.core.storage.model.StorageModels;
 import org.apache.skywalking.oap.server.library.module.ModuleManager;
+import org.apache.skywalking.oap.server.library.util.CollectionUtils;
 
-import java.io.IOException;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -69,8 +70,29 @@ public class ProcessTopologyBuilder {
             .getService(IComponentLibraryCatalogService.class);
     }
 
+    ProcessTopology buildDebuggable(List<Call.CallDetail> clientCalls,
+                                    List<Call.CallDetail> serverCalls) throws Exception {
+        DebuggingTraceContext traceContext = DebuggingTraceContext.TRACE_CONTEXT.get();
+        DebuggingSpan span = null;
+        try {
+            if (traceContext != null) {
+                span = traceContext.createSpan("Build process topology");
+            }
+            return build(clientCalls, serverCalls);
+        } finally {
+            if (traceContext != null && span != null) {
+                traceContext.stopSpan(span);
+            }
+        }
+    }
+
     ProcessTopology build(List<Call.CallDetail> clientCalls,
-                          List<Call.CallDetail> serverCalls) throws IOException {
+                          List<Call.CallDetail> serverCalls) throws Exception {
+        log.debug("building process topology, total found client calls: {}, total found server calls: {}",
+            clientCalls.size(), serverCalls.size());
+        if (CollectionUtils.isEmpty(clientCalls) && CollectionUtils.isEmpty(serverCalls)) {
+            return new ProcessTopology();
+        }
         List<Call> calls = new LinkedList<>();
         HashMap<String, Call> callMap = new HashMap<>();
 
@@ -88,8 +110,9 @@ public class ProcessTopologyBuilder {
                     return p;
                 }).collect(Collectors.toList())).stream()
             .map(t -> (ProcessTraffic) t)
-            .collect(Collectors.toMap(Metrics::id, this::buildNode));
+            .collect(Collectors.toMap(m -> m.id().build(), this::buildNode, (t1, t2) -> t1));
 
+        int appendCallCount = 0;
         for (Call.CallDetail clientCall : clientCalls) {
             if (!callMap.containsKey(clientCall.getId())) {
                 Call call = new Call();
@@ -101,6 +124,7 @@ public class ProcessTopologyBuilder {
                 call.addDetectPoint(DetectPoint.CLIENT);
                 call.addSourceComponent(componentLibraryCatalogService.getComponentName(clientCall.getComponentId()));
                 calls.add(call);
+                appendCallCount++;
             }
         }
 
@@ -115,6 +139,7 @@ public class ProcessTopologyBuilder {
                 call.setTarget(serverCall.getTarget());
                 call.setId(serverCall.getId());
                 calls.add(call);
+                appendCallCount++;
             }
             call.addDetectPoint(DetectPoint.SERVER);
             call.addTargetComponent(componentLibraryCatalogService.getComponentName(serverCall.getComponentId()));
@@ -123,12 +148,13 @@ public class ProcessTopologyBuilder {
         ProcessTopology topology = new ProcessTopology();
         topology.getCalls().addAll(calls);
         topology.getNodes().addAll(nodes.values());
+        log.debug("process topology built, total calls: {}, total nodes: {}", appendCallCount, nodes.size());
         return topology;
     }
 
     private ProcessNode buildNode(ProcessTraffic traffic) {
         ProcessNode processNode = new ProcessNode();
-        processNode.setId(traffic.id());
+        processNode.setId(traffic.id().build());
         processNode.setServiceId(traffic.getServiceId());
         processNode.setServiceName(IDManager.ServiceID.analysisId(traffic.getServiceId()).getName());
         processNode.setServiceInstanceId(traffic.getInstanceId());

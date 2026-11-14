@@ -20,8 +20,9 @@ package org.apache.skywalking.oap.server.receiver.zipkin;
 
 import com.linecorp.armeria.common.HttpMethod;
 import java.util.Arrays;
+
 import org.apache.skywalking.oap.server.core.CoreModule;
-import org.apache.skywalking.oap.server.library.module.ModuleConfig;
+import org.apache.skywalking.oap.server.core.RunningMode;
 import org.apache.skywalking.oap.server.library.module.ModuleDefine;
 import org.apache.skywalking.oap.server.library.module.ModuleProvider;
 import org.apache.skywalking.oap.server.library.module.ModuleStartException;
@@ -30,17 +31,15 @@ import org.apache.skywalking.oap.server.library.server.http.HTTPServer;
 import org.apache.skywalking.oap.server.library.server.http.HTTPServerConfig;
 import org.apache.skywalking.oap.server.receiver.zipkin.handler.ZipkinSpanHTTPHandler;
 import org.apache.skywalking.oap.server.receiver.zipkin.kafka.KafkaHandler;
+import org.apache.skywalking.oap.server.receiver.zipkin.trace.SpanForward;
 import org.apache.skywalking.oap.server.telemetry.TelemetryModule;
 
 public class ZipkinReceiverProvider extends ModuleProvider {
     public static final String NAME = "default";
-    private final ZipkinReceiverConfig config;
+    private ZipkinReceiverConfig config;
     private HTTPServer httpServer;
     private KafkaHandler kafkaHandler;
-
-    public ZipkinReceiverProvider() {
-        config = new ZipkinReceiverConfig();
-    }
+    private SpanForward spanForward;
 
     @Override
     public String name() {
@@ -53,12 +52,24 @@ public class ZipkinReceiverProvider extends ModuleProvider {
     }
 
     @Override
-    public ModuleConfig createConfigBeanIfAbsent() {
-        return config;
+    public ConfigCreator newConfigCreator() {
+        return new ConfigCreator<ZipkinReceiverConfig>() {
+            @Override
+            public Class type() {
+                return ZipkinReceiverConfig.class;
+            }
+
+            @Override
+            public void onInitialized(final ZipkinReceiverConfig initialized) {
+                config = initialized;
+            }
+        };
     }
 
     @Override
     public void prepare() throws ServiceNotProvidedException {
+        this.spanForward = new SpanForward(config, getManager());
+        this.registerServiceImplementation(SpanForwardService.class, spanForward);
     }
 
     @Override
@@ -74,32 +85,38 @@ public class ZipkinReceiverProvider extends ModuleProvider {
                                                                 .port(config.getRestPort())
                                                                 .contextPath(config.getRestContextPath())
                                                                 .idleTimeOut(config.getRestIdleTimeOut())
-                                                                .maxThreads(config.getRestMaxThreads())
                                                                 .acceptQueueSize(config.getRestAcceptQueueSize())
+                                                                .enableTLS(config.isRestSSLEnabled())
+                                                                .tlsKeyPath(config.getRestSSLKeyPath())
+                                                                .tlsCertChainPath(config.getRestSSLCertChainPath())
                                                                 .build();
 
             httpServer = new HTTPServer(httpServerConfig);
+            httpServer.setBlockingTaskName("zipkin-http");
             httpServer.initialize();
 
             httpServer.addHandler(
-                new ZipkinSpanHTTPHandler(config, getManager()),
+                new ZipkinSpanHTTPHandler(this.spanForward, getManager()),
                 Arrays.asList(HttpMethod.POST, HttpMethod.GET)
             );
         }
 
         if (config.isEnableKafkaCollector()) {
-            kafkaHandler = new KafkaHandler(config, getManager());
+            kafkaHandler = new KafkaHandler(config, this.spanForward, getManager());
         }
     }
 
     @Override
     public void notifyAfterCompleted() throws ModuleStartException {
-        if (config.isEnableHttpCollector()) {
-            httpServer.start();
-        }
-
-        if (config.isEnableKafkaCollector()) {
+        if (config.isEnableKafkaCollector() && !RunningMode.isInitMode()) {
             kafkaHandler.start();
+        }
+    }
+
+    @Override
+    public void notifyBootCompleted() throws ModuleStartException {
+        if (config.isEnableHttpCollector() && !RunningMode.isInitMode()) {
+            httpServer.start();
         }
     }
 

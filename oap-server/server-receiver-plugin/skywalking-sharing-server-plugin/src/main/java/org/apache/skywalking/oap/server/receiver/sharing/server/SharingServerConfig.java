@@ -31,9 +31,16 @@ public class SharingServerConfig extends ModuleConfig {
      */
     private int restPort;
     private String restContextPath;
-    private int restMaxThreads = 200;
     private long restIdleTimeOut = 30000;
     private int restAcceptQueueSize = 0;
+    /**
+     * TLS settings for the sharing REST server (env vars {@code SW_RECEIVER_SHARING_REST_SSL_*}).
+     * The certificate and key are read from disk and reloaded on rotation without a
+     * restart. Server-side TLS only (no mTLS).
+     */
+    private boolean restSSLEnabled = false;
+    private String restSSLKeyPath;
+    private String restSSLCertChainPath;
 
     private String gRPCHost;
     /**
@@ -43,7 +50,6 @@ public class SharingServerConfig extends ModuleConfig {
     private int maxConcurrentCallsPerConnection;
     private int maxMessageSize;
     private int gRPCThreadPoolSize;
-    private int gRPCThreadPoolQueueSize;
     private String authentication;
     private boolean gRPCSslEnabled = false;
     private String gRPCSslKeyPath;

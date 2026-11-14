@@ -32,11 +32,17 @@ public class HTTPServerConfig {
     private String contextPath;
 
     @Builder.Default
-    private int maxThreads = 200;
-    @Builder.Default
     private long idleTimeOut = 30000;
     @Builder.Default
     private int acceptQueueSize = 0;
     @Builder.Default
     private int maxRequestHeaderSize = 8192;
+
+    @Builder.Default
+    private boolean enableTLS = false;
+
+    private String tlsKeyPath;
+    private String tlsCertChainPath;
+
+    private boolean acceptProxyRequest;
 }

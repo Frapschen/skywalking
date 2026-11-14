@@ -34,6 +34,7 @@ import org.apache.skywalking.oap.server.core.analysis.manual.log.LogRecord;
 import org.apache.skywalking.oap.server.core.analysis.manual.searchtag.Tag;
 import org.apache.skywalking.oap.server.core.analysis.record.Record;
 import org.apache.skywalking.oap.server.core.query.enumeration.Order;
+import org.apache.skywalking.oap.server.core.query.input.Duration;
 import org.apache.skywalking.oap.server.core.query.input.TraceScopeCondition;
 import org.apache.skywalking.oap.server.core.query.type.ContentType;
 import org.apache.skywalking.oap.server.core.query.type.Log;
@@ -43,8 +44,9 @@ import org.apache.skywalking.oap.server.library.client.elasticsearch.ElasticSear
 import org.apache.skywalking.oap.server.library.util.CollectionUtils;
 import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.EsDAO;
 import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.IndexController;
+import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.IndexFamily;
+import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.IndexNames;
 import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.MatchCNameBuilder;
-import org.apache.skywalking.oap.server.storage.plugin.elasticsearch.base.TimeRangeIndexNameGenerator;
 
 import static java.util.Objects.nonNull;
 import static org.apache.skywalking.oap.server.library.util.StringUtil.isNotEmpty;
@@ -67,13 +69,18 @@ public class LogQueryEsDAO extends EsDAO implements ILogQueryDAO {
                           final Order queryOrder,
                           final int from,
                           final int limit,
-                          final long startSecondTB,
-                          final long endSecondTB,
+                          final Duration duration,
                           final List<Tag> tags,
                           final List<String> keywordsOfContent,
                           final List<String> excludingKeywordsOfContent) throws IOException {
+        long startSecondTB = 0;
+        long endSecondTB = 0;
+        if (nonNull(duration)) {
+            startSecondTB = duration.getStartTimeBucketInSec();
+            endSecondTB = duration.getEndTimeBucketInSec();
+        }
         final BoolQueryBuilder query = Query.bool();
-        if (IndexController.LogicIndicesRegister.isPhysicalTable(LogRecord.INDEX_NAME)) {
+        if (IndexController.LogicIndicesRegister.isMergedTable(LogRecord.INDEX_NAME)) {
             query.must(Query.term(IndexController.LogicIndicesRegister.RECORD_TABLE_NAME, LogRecord.INDEX_NAME));
         }
         if (startSecondTB != 0 && endSecondTB != 0) {
@@ -98,6 +105,9 @@ public class LogQueryEsDAO extends EsDAO implements ILogQueryDAO {
             }
             if (nonNull(relatedTrace.getSpanId())) {
                 query.must(Query.term(AbstractLogRecord.SPAN_ID, relatedTrace.getSpanId()));
+            }
+            if (isNotEmpty(relatedTrace.getOtlpSpanId())) {
+                query.must(Query.term(AbstractLogRecord.OTLP_SPAN_ID, relatedTrace.getOtlpSpanId()));
             }
         }
 
@@ -139,11 +149,8 @@ public class LogQueryEsDAO extends EsDAO implements ILogQueryDAO {
                   .size(limit)
                   .from(from);
 
-        SearchResponse response = getClient().search(new TimeRangeIndexNameGenerator(
-            IndexController.LogicIndicesRegister.getPhysicalTableName(LogRecord.INDEX_NAME),
-            startSecondTB,
-            endSecondTB
-        ), search.build());
+        SearchResponse response = searchDebuggable(
+            IndexNames.rangeIndices(IndexFamily.of(LogRecord.INDEX_NAME), duration), search.build());
 
         Logs logs = new Logs();
 
